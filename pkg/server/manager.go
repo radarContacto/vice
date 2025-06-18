@@ -71,6 +71,7 @@ type SimScenarioConfiguration struct {
 	PrimaryAirport      string
 
 	Wind         av.Wind
+	WindLayers   []av.WindLayer
 	LaunchConfig sim.LaunchConfig
 
 	DepartureRunways []sim.DepartureRunway
@@ -262,6 +263,7 @@ func (sm *SimManager) makeSimConfiguration(config *NewSimConfiguration, lg *log.
 		MagneticVariation:       sg.MagneticVariation,
 		NmPerLongitude:          sg.NmPerLongitude,
 		Wind:                    sc.Wind,
+		WindLayers:              sc.WindLayers,
 		Airports:                sg.Airports,
 		Fixes:                   sg.Fixes,
 		PrimaryAirport:          sg.PrimaryAirport,

@@ -528,7 +528,7 @@ func (nav *Nav) Summary(fp av.FlightPlan, lg *log.Logger) string {
 	targetAltitude, _ := nav.TargetAltitude(lg)
 	lines = append(lines, fmt.Sprintf("IAS %d GS %d TAS %d", int(nav.FlightState.IAS),
 		int(nav.FlightState.GS), int(nav.TAS())))
-	ias, _ := nav.TargetSpeed(targetAltitude, lg)
+	ias, _ := nav.TargetSpeed(nil, targetAltitude, lg)
 	if nav.Speed.MaintainSlowestPractical {
 		lines = append(lines, fmt.Sprintf("Maintain slowest practical speed: %.0f kts", ias))
 	} else if nav.Speed.MaintainMaximumForward {
@@ -639,11 +639,11 @@ func (nav *Nav) ContactMessage(reportingPoints []av.ReportingPoint, star string)
 ///////////////////////////////////////////////////////////////////////////
 // Simulation
 
-func (nav *Nav) updateAirspeed(alt float32, lg *log.Logger) (float32, bool) {
+func (nav *Nav) updateAirspeed(wind av.WindModel, alt float32, lg *log.Logger) (float32, bool) {
 	// Figure out what speed we're supposed to be going. The following is
 	// prioritized, so once targetSpeed has been set, nothing should
 	// override it.
-	targetSpeed, targetRate := nav.TargetSpeed(alt, lg)
+	targetSpeed, targetRate := nav.TargetSpeed(wind, alt, lg)
 
 	// Stay within the aircraft's capabilities
 	targetSpeed = math.Clamp(targetSpeed, nav.Perf.Speed.Min, MaxIAS)
@@ -960,7 +960,7 @@ func (nav *Nav) Check(lg *log.Logger) {
 // returns passed waypoint if any
 func (nav *Nav) Update(wind av.WindModel, fp *av.FlightPlan, lg *log.Logger) *av.Waypoint {
 	targetAltitude, altitudeRate := nav.TargetAltitude(lg)
-	deltaKts, slowingTo250 := nav.updateAirspeed(targetAltitude, lg)
+	deltaKts, slowingTo250 := nav.updateAirspeed(wind, targetAltitude, lg)
 	nav.updateAltitude(targetAltitude, altitudeRate, lg, deltaKts, slowingTo250)
 	nav.updateHeading(wind, lg)
 	nav.updatePositionAndGS(wind, lg)
@@ -1539,7 +1539,7 @@ func (nav *Nav) getWaypointAltitudeConstraint() *WaypointCrossingConstraint {
 	}
 }
 
-func (nav *Nav) TargetSpeed(targetAltitude float32, lg *log.Logger) (float32, float32) {
+func (nav *Nav) TargetSpeed(wind av.WindModel, targetAltitude float32, lg *log.Logger) (float32, float32) {
 	if nav.Airwork != nil {
 		if spd, rate, ok := nav.Airwork.TargetSpeed(); ok {
 			return spd, rate
@@ -1650,14 +1650,22 @@ func (nav *Nav) TargetSpeed(targetAltitude float32, lg *log.Logger) (float32, fl
 		return *nav.Speed.Restriction, MaximumRate
 	}
 
-	// Absent controller speed restrictions, slow down arrivals starting 15 miles out.
+	// Absent controller speed restrictions, maintain approach speed once
+	// on final and transition to landing speed only very close to
+	// touchdown.
 	if nav.Speed.Assigned == nil && fd != 0 && fd < 15 {
 		spd := nav.Perf.Speed
-		// Expected speed at 10 DME, without further direction.
+		// Expected speed with wind additives.
 		approachSpeed := 1.25 * spd.Landing
 
-		x := math.Clamp((fd-1)/9, float32(0), float32(1))
-		ias := math.Lerp(x, spd.Landing, approachSpeed)
+		var ias float32
+		if fd <= 1 {
+			x := math.Clamp(fd, 0, 1)
+			ias = math.Lerp(x, spd.Landing, approachSpeed)
+		} else {
+			// Maintain approach speed until very short final.
+			ias = approachSpeed
+		}
 		// Don't speed up after being been cleared to land.
 		ias = min(ias, nav.FlightState.IAS)
 

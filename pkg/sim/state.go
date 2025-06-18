@@ -74,8 +74,9 @@ type State struct {
 	NmPerLongitude    float32
 	PrimaryAirport    string
 
-	METAR map[string]*av.METAR
-	Wind  av.Wind
+	METAR      map[string]*av.METAR
+	Wind       av.Wind
+	WindLayers []av.WindLayer
 
 	TotalIFR, TotalVFR int
 
@@ -136,8 +137,9 @@ func newState(config NewSimConfiguration, manifest *VideoMapManifest, lg *log.Lo
 		NmPerLongitude:    config.NmPerLongitude,
 		PrimaryAirport:    config.PrimaryAirport,
 
-		METAR: make(map[string]*av.METAR),
-		Wind:  config.Wind,
+		METAR:      make(map[string]*av.METAR),
+		Wind:       config.Wind,
+		WindLayers: config.WindLayers,
 
 		SimRate:        1,
 		SimDescription: config.Description,
@@ -411,27 +413,64 @@ func (ss *State) GetInitialCenter() math.Point2LL {
 }
 
 func (ss *State) AverageWindVector() [2]float32 {
-	d := math.OppositeHeading(float32(ss.Wind.Direction))
-	v := [2]float32{math.Sin(math.Radians(d)), math.Cos(math.Radians(d))}
-	return math.Scale2f(v, float32(ss.Wind.Speed))
+	if len(ss.WindLayers) == 0 {
+		d := math.OppositeHeading(float32(ss.Wind.Direction))
+		v := [2]float32{math.Sin(math.Radians(d)), math.Cos(math.Radians(d))}
+		return math.Scale2f(v, float32(ss.Wind.Speed))
+	}
+
+	var sum [2]float32
+	for _, wl := range ss.WindLayers {
+		d := math.OppositeHeading(float32(wl.Wind.Direction))
+		v := [2]float32{math.Sin(math.Radians(d)), math.Cos(math.Radians(d))}
+		sum = math.Add2f(sum, math.Scale2f(v, float32(wl.Wind.Speed)))
+	}
+	return math.Scale2f(sum, 1/float32(len(ss.WindLayers)))
 }
 
 func (ss *State) GetWindVector(p math.Point2LL, alt float32) [2]float32 {
-	// Sinusoidal wind speed variation from the base speed up to base +
-	// gust and then back...
-	windSpeed := float32(ss.Wind.Speed)
-	if ss.Wind.Gust > 0 {
-		base := time.UnixMicro(0)
-		sec := ss.SimTime.Sub(base).Seconds()
-		windSpeed += float32(ss.Wind.Gust-ss.Wind.Speed) * float32(1+gomath.Cos(sec/4)) / 2
+	// Single wind layer fallback
+	layers := ss.WindLayers
+	if len(layers) == 0 {
+		layers = []av.WindLayer{{Altitude: 0, Wind: ss.Wind}}
 	}
 
-	// Wind.Direction is where it's coming from, so +180 to get the vector
-	// that affects the aircraft's course.
-	d := math.OppositeHeading(float32(ss.Wind.Direction))
-	vWind := [2]float32{math.Sin(math.Radians(d)), math.Cos(math.Radians(d))}
-	vWind = math.Scale2f(vWind, windSpeed/3600)
-	return vWind
+	// Find bracketing layers
+	lower := layers[0]
+	upper := layers[len(layers)-1]
+	for i := 0; i < len(layers); i++ {
+		if alt < layers[i].Altitude {
+			upper = layers[i]
+			if i > 0 {
+				lower = layers[i-1]
+			} else {
+				lower = layers[i]
+			}
+			break
+		}
+		lower = layers[i]
+	}
+
+	t := float32(0)
+	if upper.Altitude != lower.Altitude {
+		t = (alt - lower.Altitude) / (upper.Altitude - lower.Altitude)
+	}
+
+	windToVector := func(w av.Wind) [2]float32 {
+		speed := float32(w.Speed)
+		if w.Gust > 0 {
+			base := time.UnixMicro(0)
+			sec := ss.SimTime.Sub(base).Seconds()
+			speed += float32(w.Gust-w.Speed) * float32(1+gomath.Cos(sec/4)) / 2
+		}
+		d := math.OppositeHeading(float32(w.Direction))
+		v := [2]float32{math.Sin(math.Radians(d)), math.Cos(math.Radians(d))}
+		return math.Scale2f(v, speed/3600)
+	}
+
+	vLower := windToVector(lower.Wind)
+	vUpper := windToVector(upper.Wind)
+	return math.Lerp2f(t, vUpper, vLower)
 }
 
 func (ss *State) FacilityFromController(callsign string) (string, bool) {

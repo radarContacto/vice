@@ -26,6 +26,13 @@ type Wind struct {
 	Gust      int `json:"gust"`
 }
 
+// WindLayer specifies wind conditions at a given altitude. Altitude is in
+// feet MSL.
+type WindLayer struct {
+	Altitude float32 `json:"altitude"`
+	Wind     Wind    `json:"wind"`
+}
+
 func (w Wind) String() string {
 	if w.Speed <= 0 {
 		return "00000KT"

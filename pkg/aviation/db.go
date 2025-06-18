@@ -205,6 +205,51 @@ type FleetAircraft struct {
 	Count int
 }
 
+// baseApproachSpeed returns a reasonable final approach speed for this
+// aircraft type. If landing speed is available, a small buffer above that
+// speed is used. Otherwise V2 or a default is returned.
+func (ap AircraftPerformance) baseApproachSpeed() float32 {
+	if ap.Speed.Landing > 0 {
+		return ap.Speed.Landing + 5
+	}
+	if ap.Speed.V2 > 0 {
+		return 1.25 * ap.Speed.V2
+	}
+	return 120
+}
+
+// ApproachSpeed returns the final approach speed including wind additives. The
+// runway heading is used to compute the headwind component of the provided
+// wind. Jets and turboprops add half the headwind plus the full gust factor
+// (not to exceed 20 knots). Pistons add half the gust factor...I suppose we should also add a max additive but most pistons won't be landing
+// in very windy conditions
+func (ap AircraftPerformance) ApproachSpeed(w Wind, runwayHeading float32) float32 {
+	speed := ap.baseApproachSpeed()
+
+	gustFactor := float32(0)
+	if w.Gust > w.Speed {
+		gustFactor = float32(w.Gust - w.Speed)
+	}
+
+	additive := float32(0)
+	switch ap.Engine.AircraftType {
+	case "J", "T":
+		diff := math.HeadingDifference(float32(w.Direction), runwayHeading)
+		headwind := float32(w.Speed) * math.Cos(math.Radians(diff))
+		if headwind < 0 {
+			headwind = 0
+		}
+		additive = headwind/2 + gustFactor
+		if additive > 20 {
+			additive = 20
+		}
+	case "P":
+		additive = gustFactor / 2
+	}
+
+	return speed + additive
+}
+
 func init() {
 	db := &StaticDatabase{}
 
