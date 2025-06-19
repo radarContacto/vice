@@ -120,6 +120,19 @@ func (wp WindProfile) windAt(alt float32) Wind {
 	return Wind{Direction: int(dir + 0.5), Speed: spd, Gust: gst}
 }
 
+func (wp WindProfile) SurfaceWind() Wind {
+	if len(wp) == 0 {
+		return Wind{}
+	}
+	idx := 0
+	for i := 1; i < len(wp); i++ {
+		if wp[i].Altitude < wp[idx].Altitude {
+			idx = i
+		}
+	}
+	return wp[idx].Wind
+}
+
 func (wp WindProfile) GetWindVector(p math.Point2LL, alt float32) [2]float32 {
 	w := wp.windAt(alt)
 	d := math.OppositeHeading(float32(w.Direction))

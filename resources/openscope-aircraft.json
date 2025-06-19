@@ -7984,10 +7984,10 @@
     },
     "speed": {
       "min": 130,
-      "landing": 135,
-      "cruise": 429,
+      "landing": 137,
+      "cruise": 440,
       "cruiseM": 0.78,
-      "max": 492,
+      "max": 470,
       "maxM": 0.81
     },
     "capability": {

@@ -1657,12 +1657,16 @@ func (nav *Nav) TargetSpeed(wind av.WindModel, targetAltitude float32, lg *log.L
 
 		var approachSpeed float32
 		if nav.Approach.Assigned != nil {
-			// Compute approach speed with wind additives.
-			w := wind.GetWindVector(nav.FlightState.Position, nav.FlightState.Altitude)
-			dir := math.Degrees(math.Atan2(-w[0], -w[1]))
+			// Compute approach speed using current winds with surface gusts.
+			wv := wind.GetWindVector(nav.FlightState.Position, nav.FlightState.Altitude)
+			dir := math.Degrees(math.Atan2(-wv[0], -wv[1]))
 			dir = math.NormalizeHeading(dir + nav.FlightState.MagneticVariation)
+			var gust int
+			if sw, ok := any(wind).(interface{ SurfaceWind() av.Wind }); ok {
+				gust = sw.SurfaceWind().Gust
+			}
 			apHeading := nav.Approach.Assigned.RunwayHeading(nav.FlightState.NmPerLongitude, nav.FlightState.MagneticVariation)
-			approachSpeed = nav.Perf.ApproachSpeed(av.Wind{Direction: int(dir + 0.5), Speed: int(math.Length2f(w)*3600 + 0.5)}, apHeading)
+			approachSpeed = nav.Perf.ApproachSpeed(av.Wind{Direction: int(dir + 0.5), Speed: int(math.Length2f(wv)*3600 + 0.5), Gust: gust}, apHeading)
 		} else {
 			// Fallback to base approach speed.
 			approachSpeed = nav.Perf.ApproachSpeed(av.Wind{}, 0)

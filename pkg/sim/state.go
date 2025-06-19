@@ -7,7 +7,6 @@ package sim
 import (
 	"fmt"
 	"maps"
-	gomath "math"
 	"slices"
 	"strconv"
 	"strings"
@@ -421,20 +420,18 @@ func (ss *State) AverageWindVector() [2]float32 {
 	v := [2]float32{math.Sin(math.Radians(d)), math.Cos(math.Radians(d))}
 	return math.Scale2f(v, float32(ss.Wind.Speed))
 }
+func (ss *State) SurfaceWind() av.Wind {
+	if len(ss.WindsAloft) > 0 {
+		return ss.WindsAloft.SurfaceWind()
+	}
+	return ss.Wind
+}
 
 func (ss *State) GetWindVector(p math.Point2LL, alt float32) [2]float32 {
 	if len(ss.WindsAloft) > 0 {
 		return ss.WindsAloft.GetWindVector(p, alt)
 	}
-
-	// Sinusoidal wind speed variation from the base speed up to base +
-	// gust and then back...
 	windSpeed := float32(ss.Wind.Speed)
-	if ss.Wind.Gust > 0 {
-		base := time.UnixMicro(0)
-		sec := ss.SimTime.Sub(base).Seconds()
-		windSpeed += float32(ss.Wind.Gust-ss.Wind.Speed) * float32(1+gomath.Cos(sec/4)) / 2
-	}
 
 	// Wind.Direction is where it's coming from, so +180 to get the vector
 	// that affects the aircraft's course.
