@@ -76,6 +76,70 @@ type WindModel interface {
 	AverageWindVector() [2]float32
 }
 
+type WindLevel struct {
+	Altitude float32 `json:"altitude"`
+	Wind     Wind    `json:"wind"`
+}
+
+// WindProfile stores winds at various altitudes.
+// Altitudes are in feet and need not be sorted, but it is recommended.
+type WindProfile []WindLevel
+
+func (wp WindProfile) windAt(alt float32) Wind {
+	if len(wp) == 0 {
+		return Wind{}
+	}
+
+	// Find surrounding levels.
+	lower := wp[0]
+	upper := wp[len(wp)-1]
+	for i := 1; i < len(wp); i++ {
+		if alt < wp[i].Altitude {
+			upper = wp[i]
+			lower = wp[i-1]
+			break
+		}
+		lower = wp[i]
+	}
+
+	if upper.Altitude == lower.Altitude {
+		return lower.Wind
+	}
+
+	f := (alt - lower.Altitude) / (upper.Altitude - lower.Altitude)
+	// Interpolate speed linearly and directions via vectors.
+	d1 := math.OppositeHeading(float32(lower.Wind.Direction))
+	v1 := [2]float32{math.Sin(math.Radians(d1)), math.Cos(math.Radians(d1))}
+	d2 := math.OppositeHeading(float32(upper.Wind.Direction))
+	v2 := [2]float32{math.Sin(math.Radians(d2)), math.Cos(math.Radians(d2))}
+	v := math.Add2f(math.Scale2f(v1, 1-f), math.Scale2f(v2, f))
+	dir := math.OppositeHeading(math.Degrees(math.Atan2(v[0], v[1])))
+	spd := lower.Wind.Speed + int(float32(upper.Wind.Speed-lower.Wind.Speed)*f)
+	gst := lower.Wind.Gust + int(float32(upper.Wind.Gust-lower.Wind.Gust)*f)
+
+	return Wind{Direction: int(dir + 0.5), Speed: spd, Gust: gst}
+}
+
+func (wp WindProfile) GetWindVector(p math.Point2LL, alt float32) [2]float32 {
+	w := wp.windAt(alt)
+	d := math.OppositeHeading(float32(w.Direction))
+	v := [2]float32{math.Sin(math.Radians(d)), math.Cos(math.Radians(d))}
+	return math.Scale2f(v, float32(w.Speed)/3600)
+}
+
+func (wp WindProfile) AverageWindVector() [2]float32 {
+	if len(wp) == 0 {
+		return [2]float32{}
+	}
+	var sum [2]float32
+	for _, lvl := range wp {
+		d := math.OppositeHeading(float32(lvl.Wind.Direction))
+		v := [2]float32{math.Sin(math.Radians(d)), math.Cos(math.Radians(d))}
+		sum = math.Add2f(sum, math.Scale2f(v, float32(lvl.Wind.Speed)))
+	}
+	return math.Scale2f(sum, 1/float32(len(wp)))
+}
+
 ///////////////////////////////////////////////////////////////////////////
 // METAR
 

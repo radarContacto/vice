@@ -1649,18 +1649,17 @@ func (nav *Nav) TargetSpeed(wind av.WindModel, targetAltitude float32, lg *log.L
 		//lg.Debugf("speed: previous restriction %.0f", *nav.Speed.Restriction)
 		return *nav.Speed.Restriction, MaximumRate
 	}
-
-	// Absent controller speed restrictions, maintain approach speed once
-	// on final and transition to landing speed only very close to
-	// touchdown.
-	if nav.Speed.Assigned == nil && fd != 0 && fd < 15 {
+	// Absent controller speed restrictions, maintain approach speed on
+	// final and only start transitioning to the landing reference speed
+	// in the last half mile before touchdown.
+	if nav.Speed.Assigned == nil && fd != 0 && fd < 10 {
 		spd := nav.Perf.Speed
 		// Expected speed with wind additives.
 		approachSpeed := 1.25 * spd.Landing
 
 		var ias float32
-		if fd <= 1 {
-			x := math.Clamp(fd, 0, 1)
+		if fd <= 0.1 {
+			x := math.Clamp(fd/0.1, 0, 1)
 			ias = math.Lerp(x, spd.Landing, approachSpeed)
 		} else {
 			// Maintain approach speed until very short final.

@@ -54,7 +54,7 @@ type scenario struct {
 	SplitConfigurations av.SplitConfigurationSet `json:"multi_controllers"`
 	DefaultSplit        string                   `json:"default_split"`
 	Wind                av.Wind                  `json:"wind"`
-	WindLayers          []av.WindLayer           `json:"wind_layers,omitempty"`
+	WindsAloft          av.WindProfile           `json:"winds_aloft,omitempty"`
 	VirtualControllers  []string                 `json:"controllers"`
 
 	// Map from inbound flow names to a map from airport name to default rate,
@@ -1350,7 +1350,7 @@ func initializeSimConfigurations(sg *scenarioGroup,
 			SplitConfigurations: scenario.SplitConfigurations,
 			LaunchConfig:        lc,
 			Wind:                scenario.Wind,
-			WindLayers:          scenario.WindLayers,
+			WindsAloft:          scenario.WindsAloft,
 			DepartureRunways:    scenario.DepartureRunways,
 			ArrivalRunways:      scenario.ArrivalRunways,
 			PrimaryAirport:      sg.PrimaryAirport,

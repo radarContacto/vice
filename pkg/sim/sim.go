@@ -177,7 +177,7 @@ type NewSimConfiguration struct {
 	TFRs                    []av.TFR
 	LiveWeather             bool
 	Wind                    av.Wind
-	WindLayers              []av.WindLayer
+	WindsAloft              av.WindProfile
 	STARSFacilityAdaptation STARSFacilityAdaptation
 	IsLocal                 bool
 
