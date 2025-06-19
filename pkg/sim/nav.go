@@ -1654,8 +1654,19 @@ func (nav *Nav) TargetSpeed(wind av.WindModel, targetAltitude float32, lg *log.L
 	// in the last half mile before touchdown.
 	if nav.Speed.Assigned == nil && fd != 0 && fd < 10 {
 		spd := nav.Perf.Speed
-		// Expected speed with wind additives.
-		approachSpeed := 1.25 * spd.Landing
+
+		var approachSpeed float32
+		if nav.Approach.Assigned != nil {
+			// Compute approach speed with wind additives.
+			w := wind.GetWindVector(nav.FlightState.Position, nav.FlightState.Altitude)
+			dir := math.Degrees(math.Atan2(-w[0], -w[1]))
+			dir = math.NormalizeHeading(dir + nav.FlightState.MagneticVariation)
+			apHeading := nav.Approach.Assigned.RunwayHeading(nav.FlightState.NmPerLongitude, nav.FlightState.MagneticVariation)
+			approachSpeed = nav.Perf.ApproachSpeed(av.Wind{Direction: int(dir + 0.5), Speed: int(math.Length2f(w)*3600 + 0.5)}, apHeading)
+		} else {
+			// Fallback to base approach speed.
+			approachSpeed = nav.Perf.ApproachSpeed(av.Wind{}, 0)
+		}
 
 		var ias float32
 		if fd <= 0.1 {
