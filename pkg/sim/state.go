@@ -18,6 +18,8 @@ import (
 	"github.com/mmp/vice/pkg/rand"
 	"github.com/mmp/vice/pkg/util"
 
+	"github.com/mmp/vice/pkg/weather"
+
 	"github.com/brunoga/deep"
 )
 
@@ -73,9 +75,8 @@ type State struct {
 	NmPerLongitude    float32
 	PrimaryAirport    string
 
-	METAR      map[string]*av.METAR
-	Wind       av.Wind
-	WindsAloft av.WindProfile
+	METAR    map[string]*av.METAR
+	WindGrid *weather.WindGrid
 
 	TotalIFR, TotalVFR int
 
@@ -136,9 +137,7 @@ func newState(config NewSimConfiguration, manifest *VideoMapManifest, lg *log.Lo
 		NmPerLongitude:    config.NmPerLongitude,
 		PrimaryAirport:    config.PrimaryAirport,
 
-		METAR:      make(map[string]*av.METAR),
-		Wind:       config.Wind,
-		WindsAloft: config.WindsAloft,
+		METAR: make(map[string]*av.METAR),
 
 		SimRate:        1,
 		SimDescription: config.Description,
@@ -149,6 +148,12 @@ func newState(config NewSimConfiguration, manifest *VideoMapManifest, lg *log.Lo
 
 	if manifest != nil {
 		ss.VideoMapLibraryHash, _ = manifest.Hash()
+	}
+
+	if wg, err := weather.LoadWindData(); err == nil {
+		ss.WindGrid = wg
+	} else {
+		lg.Errorf("wind data: %v", err)
 	}
 
 	if len(config.ControllerAirspace) > 0 {
@@ -210,7 +215,7 @@ func newState(config NewSimConfiguration, manifest *VideoMapManifest, lg *log.Lo
 			ss.METAR[ap] = &av.METAR{
 				// Just provide the stuff that the STARS display shows
 				AirportICAO: ap,
-				Wind:        ss.Wind.Randomize(r),
+				Wind:        ss.WindGrid.SurfaceWind().Randomize(r),
 				Altimeter:   fmt.Sprintf("A%d", alt-2+r.Intn(4)),
 			}
 		}
@@ -412,33 +417,23 @@ func (ss *State) GetInitialCenter() math.Point2LL {
 }
 
 func (ss *State) AverageWindVector() [2]float32 {
-	if len(ss.WindsAloft) > 0 {
-		return ss.WindsAloft.AverageWindVector()
+	if ss.WindGrid != nil {
+		return ss.WindGrid.AverageWindVector()
 	}
-
-	d := math.OppositeHeading(float32(ss.Wind.Direction))
-	v := [2]float32{math.Sin(math.Radians(d)), math.Cos(math.Radians(d))}
-	return math.Scale2f(v, float32(ss.Wind.Speed))
+	return [2]float32{}
 }
 func (ss *State) SurfaceWind() av.Wind {
-	if len(ss.WindsAloft) > 0 {
-		return ss.WindsAloft.SurfaceWind()
+	if ss.WindGrid != nil {
+		return ss.WindGrid.SurfaceWind()
 	}
-	return ss.Wind
+	return av.Wind{}
 }
 
 func (ss *State) GetWindVector(p math.Point2LL, alt float32) [2]float32 {
-	if len(ss.WindsAloft) > 0 {
-		return ss.WindsAloft.GetWindVector(p, alt)
+	if ss.WindGrid != nil {
+		return ss.WindGrid.GetWindVector(p, alt)
 	}
-	windSpeed := float32(ss.Wind.Speed)
-
-	// Wind.Direction is where it's coming from, so +180 to get the vector
-	// that affects the aircraft's course.
-	d := math.OppositeHeading(float32(ss.Wind.Direction))
-	vWind := [2]float32{math.Sin(math.Radians(d)), math.Cos(math.Radians(d))}
-	vWind = math.Scale2f(vWind, windSpeed/3600)
-	return vWind
+	return [2]float32{}
 }
 
 func (ss *State) FacilityFromController(callsign string) (string, bool) {
