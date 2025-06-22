@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
+	"sort"
 	"strings"
 
 	"github.com/mmp/vice/pkg/math"
@@ -263,4 +265,187 @@ func GetWeather(icao ...string) ([]METAR, error) {
 	})
 
 	return metar, nil
+}
+
+// WindGrid represents wind vectors on a regular latitude/longitude/altitude grid.
+type WindGrid struct {
+	Levels     []float64
+	Latitudes  []float64
+	Longitudes []float64
+	// Vectors[k][i][j] corresponds to altitude Levels[k], latitude Latitudes[i], longitude Longitudes[j].
+	Vectors [][][][2]float64
+}
+
+// WindData holds the grid loaded from wind_data.json.
+var WindData *WindGrid
+
+// LoadWindData parses the built-in JSON wind dataset into WindData.
+func LoadWindData() error {
+	type level struct {
+		Mb float64 `json:"mb"`
+		U  float64 `json:"u"`
+		V  float64 `json:"v"`
+		T  float64 `json:"t"`
+		H  float64 `json:"h"`
+	}
+	type point struct {
+		Lat    float64 `json:"lat"`
+		Lon    float64 `json:"lon"`
+		Levels []level `json:"levels"`
+	}
+	var raw struct {
+		Points []point `json:"points"`
+	}
+	data, err := os.ReadFile("vice/data/weather/wind_data.json")
+	if err != nil {
+		return err
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	if len(raw.Points) == 0 {
+		return fmt.Errorf("wind data empty")
+	}
+
+	// Build unique latitude and longitude arrays.
+	latMap := make(map[float64]int)
+	lonMap := make(map[float64]int)
+	var lats, lons []float64
+	for _, p := range raw.Points {
+		if _, ok := latMap[p.Lat]; !ok {
+			latMap[p.Lat] = len(lats)
+			lats = append(lats, p.Lat)
+		}
+		if _, ok := lonMap[p.Lon]; !ok {
+			lonMap[p.Lon] = len(lons)
+			lons = append(lons, p.Lon)
+		}
+	}
+	sort.Float64s(lats)
+	sort.Float64s(lons)
+	for i, v := range lats {
+		latMap[v] = i
+	}
+	for i, v := range lons {
+		lonMap[v] = i
+	}
+
+	// Assume all points share the same altitude levels as the first point.
+	levels := make([]float64, len(raw.Points[0].Levels))
+	for i, lv := range raw.Points[0].Levels {
+		levels[i] = lv.H * 3.28084 // meters to feet
+	}
+
+	vectors := make([][][][2]float64, len(levels))
+	for k := range vectors {
+		vectors[k] = make([][][2]float64, len(lats))
+		for i := range vectors[k] {
+			vectors[k][i] = make([][2]float64, len(lons))
+		}
+	}
+
+	for _, p := range raw.Points {
+		i := latMap[p.Lat]
+		j := lonMap[p.Lon]
+		for k, lv := range p.Levels {
+			vectors[k][i][j] = [2]float64{lv.U, lv.V}
+		}
+	}
+
+	WindData = &WindGrid{Levels: levels, Latitudes: lats, Longitudes: lons, Vectors: vectors}
+	return nil
+}
+
+// interpolate returns the wind vector at the specified lat, lon and altitude using trilinear interpolation.
+func (wg *WindGrid) interpolate(lat, lon, alt float64) [2]float64 {
+	if wg == nil || len(wg.Levels) == 0 {
+		return [2]float64{}
+	}
+	i := sort.SearchFloat64s(wg.Latitudes, lat)
+	if i == 0 || i == len(wg.Latitudes) {
+		return [2]float64{}
+	}
+	j := sort.SearchFloat64s(wg.Longitudes, lon)
+	if j == 0 || j == len(wg.Longitudes) {
+		return [2]float64{}
+	}
+	k := sort.SearchFloat64s(wg.Levels, alt)
+	if k == 0 {
+		k = 1
+	} else if k >= len(wg.Levels) {
+		k = len(wg.Levels) - 1
+	}
+
+	lat0, lat1 := wg.Latitudes[i-1], wg.Latitudes[i]
+	lon0, lon1 := wg.Longitudes[j-1], wg.Longitudes[j]
+	lev0, lev1 := wg.Levels[k-1], wg.Levels[k]
+	fx := (lat - lat0) / (lat1 - lat0)
+	fy := (lon - lon0) / (lon1 - lon0)
+	fz := (alt - lev0) / (lev1 - lev0)
+
+	v000 := wg.Vectors[k-1][i-1][j-1]
+	v001 := wg.Vectors[k-1][i-1][j]
+	v010 := wg.Vectors[k-1][i][j-1]
+	v011 := wg.Vectors[k-1][i][j]
+	v100 := wg.Vectors[k][i-1][j-1]
+	v101 := wg.Vectors[k][i-1][j]
+	v110 := wg.Vectors[k][i][j-1]
+	v111 := wg.Vectors[k][i][j]
+
+	var v [2]float64
+	for c := 0; c < 2; c++ {
+		c00 := v000[c]*(1-fx) + v010[c]*fx
+		c01 := v001[c]*(1-fx) + v011[c]*fx
+		c10 := v100[c]*(1-fx) + v110[c]*fx
+		c11 := v101[c]*(1-fx) + v111[c]*fx
+		c0 := c00*(1-fy) + c01*fy
+		c1 := c10*(1-fy) + c11*fy
+		v[c] = c0*(1-fz) + c1*fz
+	}
+	return v
+}
+
+// GetWind returns the wind at the given location using the global WindData grid.
+func GetWind(lat, lon, altitude float64) Wind {
+	if WindData == nil {
+		return Wind{}
+	}
+	v := WindData.interpolate(lat, lon, altitude)
+	speed := math.Length2f([2]float32{float32(v[0]), float32(v[1])}) * 1.94384 // m/s to knots
+	dir := math.OppositeHeading(math.Degrees(math.Atan2(float32(v[0]), float32(v[1]))))
+	return Wind{Direction: int(dir + 0.5), Speed: int(speed + 0.5)}
+}
+
+// GetWindVector returns the wind vector in NM/s at a given point and altitude.
+func (wg *WindGrid) GetWindVector(p math.Point2LL, alt float32) [2]float32 {
+	v := wg.interpolate(float64(p.Latitude()), float64(p.Longitude()), float64(alt))
+	return [2]float32{float32(v[0] / 1852), float32(v[1] / 1852)}
+}
+
+// AverageWindVector returns the average wind vector in NM/s over the grid.
+func (wg *WindGrid) AverageWindVector() [2]float32 {
+	if wg == nil {
+		return [2]float32{}
+	}
+	var sum [2]float64
+	count := 0
+	for _, sl := range wg.Vectors {
+		for _, row := range sl {
+			for _, v := range row {
+				sum[0] += v[0]
+				sum[1] += v[1]
+				count++
+			}
+		}
+	}
+	if count == 0 {
+		return [2]float32{}
+	}
+	return [2]float32{float32(sum[0] / float64(count) / 1852), float32(sum[1] / float64(count) / 1852)}
+}
+
+func init() {
+	if err := LoadWindData(); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to load wind data: %v\n", err)
+	}
 }
