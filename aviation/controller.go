@@ -55,6 +55,40 @@ type MultiUserController struct {
 	InboundFlows     []string `json:"inbound_flows"`
 }
 
+// FacilityType enumerates the supported facility classifications used when
+// defining controller positions within a scenario file.
+type FacilityType string
+
+const (
+	FacilityTypeAdjacentTRACON FacilityType = "T"
+	FacilityTypeLocalSTARS     FacilityType = "L"
+	FacilityTypeARTCC          FacilityType = "A"
+)
+
+// FacilityControlPosition describes a controller position that belongs to a
+// scenario facility definition.
+type FacilityControlPosition struct {
+	SectorRoutingID string    `json:"sector_routing_id"`
+	Frequency       Frequency `json:"frequency"`
+	RadioName       string    `json:"radio_name"`
+	ScopeChar       string    `json:"scope_char"`
+	DefaultAirport  string    `json:"default_airport"`
+	Facility        string    `json:"facility"`
+	Instructor      bool      `json:"instructor"`
+	RPO             bool      `json:"rpo"`
+}
+
+// Facility captures the metadata associated with a facility block in the
+// scenario definition. Each facility hosts zero or more control positions.
+type Facility struct {
+	FacilityType          FacilityType              `json:"facility_type"`
+	FacilityName          string                    `json:"facility_name"`
+	AdjacentTRACONID      string                    `json:"adjacent_tracon_id"`
+	TerminalSectors       []string                  `json:"terminal_sectors"`
+	AbbreviatedFacilityID string                    `json:"abbreviated_facility_id"`
+	ControlPositions      []FacilityControlPosition `json:"control_positions"`
+}
+
 ///////////////////////////////////////////////////////////////////////////
 // SplitConfigurations
 

@@ -38,6 +38,7 @@ type scenarioGroup struct {
 	Scenarios          map[string]*scenario       `json:"scenarios"`
 	DefaultScenario    string                     `json:"default_scenario"`
 	ControlPositions   map[string]*av.Controller  `json:"control_positions"`
+	Facilities         map[string]*av.Facility    `json:"facilities"`
 	Airspace           av.Airspace                `json:"airspace"`
 	InboundFlows       map[string]*av.InboundFlow `json:"inbound_flows"`
 	VFRReportingPoints []av.VFRReportingPoint     `json:"vfr_reporting_points"`
@@ -689,9 +690,112 @@ var (
 	reFixHeadingDistance = regexp.MustCompile(`^([\w-]{3,})@([\d]{3})/(\d+(\.\d+)?)$`)
 )
 
+func (sg *scenarioGroup) populateControlPositionsFromFacilities(e *util.ErrorLogger) {
+	if len(sg.ControlPositions) > 0 {
+		if len(sg.Facilities) > 0 {
+			e.ErrorString("cannot specify both \"control_positions\" and \"facilities\"")
+		}
+		return
+	}
+	if len(sg.Facilities) == 0 {
+		return
+	}
+
+	sg.ControlPositions = make(map[string]*av.Controller)
+
+	for facilityID, facility := range sg.Facilities {
+		e.Push("Facility " + facilityID)
+
+		if facility == nil {
+			e.ErrorString("facility definition is missing")
+			e.Pop()
+			continue
+		}
+
+		switch facility.FacilityType {
+		case av.FacilityTypeAdjacentTRACON, av.FacilityTypeLocalSTARS, av.FacilityTypeARTCC:
+			// ok
+		case "":
+			e.ErrorString("\"facility_type\" must be specified")
+		default:
+			e.ErrorString("unknown \"facility_type\" %q", facility.FacilityType)
+		}
+
+		if facility.FacilityType == av.FacilityTypeARTCC && facility.AbbreviatedFacilityID == "" {
+			e.ErrorString("ARTCC facilities must specify \"abbreviated_facility_id\"")
+		}
+		if facility.FacilityType == av.FacilityTypeAdjacentTRACON && facility.AdjacentTRACONID == "" {
+			e.ErrorString("Adjacent TRACON facilities must specify \"adjacent_tracon_id\"")
+		}
+
+		for _, pos := range facility.ControlPositions {
+			e.Push("Control position " + pos.SectorRoutingID)
+
+			if pos.SectorRoutingID == "" {
+				e.ErrorString("\"sector_routing_id\" must be specified")
+				e.Pop()
+				continue
+			}
+			if pos.RadioName == "" {
+				e.ErrorString("\"radio_name\" must be specified")
+			}
+			if pos.Frequency == 0 {
+				e.ErrorString("\"frequency\" must be specified")
+			}
+
+			ctrl := &av.Controller{
+				RadioName:      pos.RadioName,
+				Frequency:      pos.Frequency,
+				Scope:          pos.ScopeChar,
+				DefaultAirport: pos.DefaultAirport,
+				Instructor:     pos.Instructor,
+				RPO:            pos.RPO,
+			}
+
+			if pos.Facility != "" {
+				ctrl.Facility = pos.Facility
+			} else {
+				ctrl.Facility = facilityID
+			}
+
+			var id string
+			switch facility.FacilityType {
+			case av.FacilityTypeARTCC:
+				ctrl.ERAMFacility = true
+				ctrl.FacilityIdentifier = facility.AbbreviatedFacilityID
+				ctrl.TCP = facility.AbbreviatedFacilityID + pos.SectorRoutingID
+				id = ctrl.TCP
+			case av.FacilityTypeLocalSTARS:
+				ctrl.TCP = pos.SectorRoutingID
+				id = ctrl.TCP
+			case av.FacilityTypeAdjacentTRACON:
+				ctrl.FacilityIdentifier = facility.AdjacentTRACONID
+				ctrl.TCP = pos.SectorRoutingID
+				id = facility.AdjacentTRACONID + pos.SectorRoutingID
+			default:
+				ctrl.TCP = pos.SectorRoutingID
+				id = ctrl.Id()
+			}
+
+			if id == "" {
+				e.ErrorString("unable to derive identifier for control position")
+			} else if _, ok := sg.ControlPositions[id]; ok {
+				e.ErrorString("control position %q defined multiple times", id)
+			} else {
+				sg.ControlPositions[id] = ctrl
+			}
+
+			e.Pop()
+		}
+
+		e.Pop()
+	}
+}
 func (sg *scenarioGroup) PostDeserialize(e *util.ErrorLogger, simConfigurations map[string]map[string]*Configuration,
 	manifest *sim.VideoMapManifest) {
 	defer e.CheckDepth(e.CurrentDepth())
+
+	sg.populateControlPositionsFromFacilities(e)
 
 	// Rewrite legacy files to be TCP-based.
 	sg.rewriteControllers(e)
