@@ -1,0 +1,243 @@
+{
+  "tracon": "PVD",
+  "airports": {
+    "KPVD": {
+      "hold_for_release": true,
+      "approaches": {
+        "I23": {
+          "runway": "23",
+          "full_name": "ILS Runway 23",
+          "type": "ILS",
+          "waypoints": ["PVD_ILS23_10/iaf CUSKA/faf/a1900"]
+        }
+      },
+      "departure_routes": {
+        "23": {
+          "PUT": {
+            "cleared_altitude": 4000,
+            "waypoints": "_PVD_23/h280"
+          }
+        }
+      },
+      "departures": [
+        {
+          "airlines": [
+            {
+              "icao": "SWA",
+              "fleet": "short"
+            }
+          ],
+          "destination": "KBWI",
+          "exit": "PUT",
+          "route": "PUT NELIE Q75 MXE V378 NUGGY TRISH3"
+        }
+      ],
+      "exit_categories": {
+        "PUT": "Northwest"
+      },
+      "tower_list": 1
+    }
+  },
+  "inbound_flows": {
+    "WIPOR": {
+      "arrivals": [
+        {
+          "airlines": {
+            "KPVD": [
+              {
+                "airport": "KBWI",
+                "icao": "SWA"
+              }
+            ]
+          },
+          "initial_altitude": 21000,
+          "initial_controller": "ZCB_42",
+          "initial_speed": 310,
+          "star": "WIPOR3",
+          "runway_waypoints": {
+            "KPVD": {
+              "23": "SAUGY WAWIK SEABE NOSUH/h047",
+              "5": "SAUGY LAFAY",
+              "34": "SAUGY LAFAY",
+              "16": "SAUGY WAWIK SEABE NOSUH/h047"
+            }
+          },
+          "waypoints": "NELIE/ho WIPOR/a11000 ORW SAUGY"
+        }
+		]
+	  }
+    },
+"facilities": {
+  "ZBW": {
+    "facility_type": "A",
+    "facility_name": "Boston ARTCC",
+    "abbreviated_facility_id": "C",
+    "control_positions": [
+      { "sector_routing_id": "42", "frequency": 133420, "radio_name": "Boston Center" }
+    ]
+  },
+  "PVD": {
+    "facility_type": "L",
+    "facility_name": "Providence TRACON (Local STARS)",
+    "terminal_sectors": ["A","D"],
+    "control_positions": [
+      { "sector_routing_id": "1A", "frequency": 127900, "radio_name": "Providence Approach" },
+      { "sector_routing_id": "1D", "frequency": 123675, "radio_name": "Providence Approach" },
+      { "sector_routing_id": "1T", "frequency": 120700, "radio_name": "Providence Tower" }
+    ]
+  },
+  "BOS": {
+    "facility_type": "T",
+    "facility_name": "Boston TRACON (Adjacent)",
+    "adjacent_tracon_id": "2",
+    "control_positions": [
+      { "sector_routing_id": "1M", "frequency": 120600, "radio_name": "Boston Approach" }
+    ]
+  }
+},
+  "default_scenario": "PVD RY23",
+  "fixes": {
+    "_PVD_05": "N041.44.17.194,W071.24.53.783",
+    "_PVD_23": "N041.42.21.577,W071.26.28.046",
+    "_MINNK": "N041.22.22.845,W071.24.49.306",
+    "_OQU_16": "N041.35.12.574,W071.24.09.920",
+    "_OQU_34": "N041.36.51.451,W071.25.36.959",
+    "_EWB_05": "N041.41.21.358,W070.56.51.035",
+    "_EWB_23": "N041.39.58.452,W070.58.17.305",
+    "_EWB_32": "N041.41.12.843,W070.58.25.627",
+    "_EWB_14": "N041.39.59.290,W070.56.22.855",
+    "PVD_ILS23_10": "N041.54.03.479,W071.16.40.854"
+  },
+  "name": "KPVD",
+  "primary_airport": "KPVD",
+  "scenarios": {
+    "PVD RY23": {
+      "arrival_runways": [
+        {
+          "airport": "KPVD",
+          "runway": "23"
+        }
+      ],
+      "inbound_rates": {
+        "WIPOR": {
+          "KPVD": 10
+        }
+      },
+      "solo_controller": "NCA_1D",
+      "multi_controllers": {
+        "default": {
+          "1D": { "primary": true, "arrivals": ["WIPOR"] },
+          "1A": { "backup": "1D", "departures": ["KPVD"], "arrivals": [] }
+        }
+      },
+      "controllers": ["NCA_1A", "ZCB_42"],
+      "default_maps": ["RVMPVD011S"],
+      "departure_runways": [
+        {
+          "airport": "KPVD",
+          "rate": 0,
+          "runway": "23"
+        }
+      ],
+      "wind": {
+        "direction": "200-260"
+      }
+    }
+  },
+  "stars_config": {
+    "altimeters": ["KPVD"],
+    "center": "N041.43.29.033,W071.25.35.559",
+    "radar_sites": {
+      "PVD": {
+        "char": "P",
+        "position": "PVD",
+        "elevation": 50,
+        "primary_range": 60,
+        "secondary_range": 120,
+        "slope_angle": 0.175
+      }
+    },
+    "filters": {
+      "inhibit_ca": [
+        {
+          "id": "BOSNOCA",
+          "description": "BOS CONFLICT SUPPRESS",
+          "type": "circle",
+          "floor": 0,
+          "ceiling": 2000,
+          "radius": 7,
+          "center": "N042.23.05.581,W071.00.43.615"
+        }
+      ],
+      "auto_acquisition": [
+        {
+          "id": "ACQ",
+          "description": "AUTO ACQUISITION",
+          "type": "polygon",
+          "vertices": "N041.29.44.632,W072.58.54.494 N041.48.38.298,W072.35.01.519 N042.14.34.429,W072.13.04.671 N042.26.17.911,W071.23.30.589 N042.17.51.043,W071.05.33.847 N042.11.06.307,W070.45.27.603 N042.03.55.285,W070.27.44.236 N041.34.18.000,W070.23.59.016 N041.21.26.842,W070.33.08.964 N040.58.09.202,W070.32.50.645 N040.32.16.683,W071.58.21.260 N041.16.46.910,W072.52.06.214",
+          "floor": 0,
+          "ceiling": 23000
+        }
+      ]
+    },
+    "allow_long_scratchpad": true,
+    "pdb": {
+      "hide_gs": true
+    },
+    "force_ql_self": true,
+    "display_handoff_facility_only": false,
+    "handoff_sector_display_duration": 5,
+    "scratchpads": {
+      "PUT": "PUT",
+      "PVD_PUT": "PUT",
+      "JUMPR": "7TN"
+    },
+    "coordination_lists": [
+      { "name": ".     PVD D DEP", "id": "D", "airports": ["KPVD"] }
+    ],
+    "significant_points": {
+      "PUT": {},
+      "JUMPR": { "short_name": "7TN" },
+      "PEAKE": { "short_name": "DNE" }
+    },
+    "stars_maps": [
+      "RVMPVD005S",
+      "RVMPVD113S",
+      "RVMPVD019S",
+      "RVMPVD011S",
+      "RVMPVD110S",
+      "RVMPVD006S",
+      "RVMPVD005S",
+      "RVMPVD113S",
+      "RVMPVD019S",
+      "RVMPVD002S",
+      "RVMPVD001S",
+      "RVMPVDCIR1",
+      "RVMPVD020S",
+      "RVMPVD014S",
+      "RVMPVD016S",
+      "RVMPVD007S",
+      "RVMPVD009S",
+      "ALL RADARS 40 MILE MAP",
+      "RVMPVD023S",
+      "RVMPVD025S",
+      "AREA4RSHADED",
+      "",
+      "RVMPVD011S",
+      "RVMPVD110S",
+      "RVMPVD006S",
+      "RVMPVD004S",
+      "RVMPVD003S",
+      "RVMFIXTGTS",
+      "RVMPVD018S",
+      "RVMPVD021S",
+      "RVMPVD017S",
+      "RVMPVD008S",
+      "RVMPVD010S",
+      "RVMPVD012S",
+      "RVMPVD024S",
+      "RVMPVD028S"
+    ],
+    "video_map_file": "videomaps/PVD-videomaps.gob.zst"
+  }
+}
