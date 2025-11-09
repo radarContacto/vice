@@ -758,23 +758,28 @@ func (sg *scenarioGroup) populateControlPositionsFromFacilities(e *util.ErrorLog
 				ctrl.Facility = facilityID
 			}
 
-			var id string
+			var legacyID string
 			switch facility.FacilityType {
 			case av.FacilityTypeARTCC:
 				ctrl.ERAMFacility = true
 				ctrl.FacilityIdentifier = facility.AbbreviatedFacilityID
 				ctrl.TCP = facility.AbbreviatedFacilityID + pos.SectorRoutingID
-				id = ctrl.TCP
+				legacyID = ctrl.TCP
 			case av.FacilityTypeLocalSTARS:
 				ctrl.TCP = pos.SectorRoutingID
-				id = ctrl.TCP
+				legacyID = ctrl.TCP
 			case av.FacilityTypeAdjacentTRACON:
 				ctrl.FacilityIdentifier = facility.AdjacentTRACONID
 				ctrl.TCP = pos.SectorRoutingID
-				id = facility.AdjacentTRACONID + pos.SectorRoutingID
+				legacyID = facility.AdjacentTRACONID + pos.SectorRoutingID
 			default:
 				ctrl.TCP = pos.SectorRoutingID
-				id = ctrl.Id()
+				legacyID = ctrl.Id()
+			}
+
+			id := ctrl.FacilityPositionID()
+			if id == "" {
+				id = legacyID
 			}
 
 			if id == "" {
@@ -782,6 +787,7 @@ func (sg *scenarioGroup) populateControlPositionsFromFacilities(e *util.ErrorLog
 			} else if _, ok := sg.ControlPositions[id]; ok {
 				e.ErrorString("control position %q defined multiple times", id)
 			} else {
+				ctrl.Position = id
 				sg.ControlPositions[id] = ctrl
 			}
 
@@ -1045,26 +1051,53 @@ func (sg *scenarioGroup) PostDeserialize(e *util.ErrorLogger, simConfigurations 
 }
 
 func (sg *scenarioGroup) rewriteControllers(e *util.ErrorLogger) {
-	// Grab the original keys before rewriting.
+	aliases := make(map[string]string)
+	normalized := make(map[string]*av.Controller)
 	for position, ctrl := range sg.ControlPositions {
-		ctrl.Position = position
+		if ctrl == nil {
+			continue
+		}
+
+		originalPosition := position
+		ctrl.Position = originalPosition
+
+		canonicalID := ctrl.FacilityPositionID()
+		if canonicalID == "" {
+			canonicalID = ctrl.Id()
+		}
+
+		if canonicalID == "" {
+			e.ErrorString("%s: unable to derive canonical controller identifier", originalPosition)
+			continue
+		}
+
+		if _, ok := normalized[canonicalID]; ok {
+			e.ErrorString("%s: TCP / sector_id used for multiple \"control_positions\"", canonicalID)
+		}
+		normalized[canonicalID] = ctrl
+
+		if legacyID := ctrl.Id(); legacyID != "" {
+			aliases[legacyID] = canonicalID
+		}
+		aliases[originalPosition] = canonicalID
+		if facilityID := ctrl.FacilityPositionID(); facilityID != "" {
+			aliases[facilityID] = canonicalID
+		}
+
+		ctrl.Position = canonicalID
 	}
 
-	pos := make(map[string]*av.Controller)
-	for _, ctrl := range sg.ControlPositions {
-		id := ctrl.Id()
-		if _, ok := pos[id]; ok {
-			e.ErrorString("%s: TCP / sector_id used for multiple \"control_positions\"", id)
-		}
-		pos[id] = ctrl
-	}
+	sg.ControlPositions = normalized
 
 	rewrite := func(s *string) {
 		if *s == "" {
 			return
 		}
-		if ctrl, ok := sg.ControlPositions[*s]; ok {
-			*s = ctrl.Id()
+		if _, ok := sg.ControlPositions[*s]; ok {
+			return
+		}
+		if canonical, ok := aliases[*s]; ok {
+			*s = canonical
 		}
 	}
 	rewriteWaypoints := func(wp av.WaypointArray) {
@@ -1156,8 +1189,6 @@ func (sg *scenarioGroup) rewriteControllers(e *util.ErrorLogger) {
 			rewriteWaypoints(flow.Overflights[i].Waypoints)
 		}
 	}
-
-	sg.ControlPositions = pos
 }
 
 func PostDeserializeFacilityAdaptation(s *sim.FacilityAdaptation, e *util.ErrorLogger, sg *scenarioGroup,

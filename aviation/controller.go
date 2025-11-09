@@ -41,6 +41,29 @@ func (c Controller) ERAMID() string { // For display
 	return c.FacilityIdentifier + c.TCP
 }
 
+// SectorRoutingID returns the controller's routing identifier with any
+// facility prefix trimmed. ARTCC sectors include the abbreviated facility ID
+// in TCP, so strip it for consistency with local facilities when constructing
+// composite identifiers.
+func (c Controller) SectorRoutingID() string {
+	routingID := c.TCP
+	if c.FacilityIdentifier != "" && strings.HasPrefix(routingID, c.FacilityIdentifier) {
+		routingID = strings.TrimPrefix(routingID, c.FacilityIdentifier)
+	}
+	return routingID
+}
+
+// FacilityPositionID returns the fully-qualified identifier that combines the
+// facility identifier used in scenario definitions with the controller's
+// sector routing identifier. This is the canonical identifier referenced by
+// scenarios when selecting controllers.
+func (c Controller) FacilityPositionID() string {
+	if c.Facility == "" || c.TCP == "" {
+		return ""
+	}
+	return c.Facility + "_" + c.SectorRoutingID()
+}
+
 // split -> config
 type SplitConfigurationSet map[string]SplitConfiguration
 
