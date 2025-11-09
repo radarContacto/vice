@@ -797,7 +797,6 @@ func (sg *scenarioGroup) populateControlPositionsFromFacilities(e *util.ErrorLog
 		e.Pop()
 	}
 }
-
 func (sg *scenarioGroup) PostDeserialize(e *util.ErrorLogger, simConfigurations map[string]map[string]*Configuration,
 	manifest *sim.VideoMapManifest) {
 	defer e.CheckDepth(e.CurrentDepth())
@@ -1054,7 +1053,6 @@ func (sg *scenarioGroup) PostDeserialize(e *util.ErrorLogger, simConfigurations 
 func (sg *scenarioGroup) rewriteControllers(e *util.ErrorLogger) {
 	aliases := make(map[string]string)
 	normalized := make(map[string]*av.Controller)
-
 	for position, ctrl := range sg.ControlPositions {
 		if ctrl == nil {
 			continue
@@ -1086,15 +1084,6 @@ func (sg *scenarioGroup) rewriteControllers(e *util.ErrorLogger) {
 			aliases[facilityID] = canonicalID
 		}
 
-		if routingID := ctrl.SectorRoutingID(); routingID != "" {
-			if ctrl.Facility != "" {
-				aliases[ctrl.Facility+"_"+routingID] = canonicalID
-			}
-			if ctrl.FacilityIdentifier != "" {
-				aliases[ctrl.FacilityIdentifier+"_"+routingID] = canonicalID
-			}
-		}
-
 		ctrl.Position = canonicalID
 	}
 
@@ -1109,69 +1098,6 @@ func (sg *scenarioGroup) rewriteControllers(e *util.ErrorLogger) {
 		}
 		if canonical, ok := aliases[*s]; ok {
 			*s = canonical
-			return
-		}
-
-		facilityID, routingID, hasFacility := strings.Cut(*s, "_")
-		if !hasFacility || routingID == "" {
-			return
-		}
-
-		facility, ok := sg.Facilities[facilityID]
-		if ok && facility != nil {
-			var legacyID string
-			switch facility.FacilityType {
-			case av.FacilityTypeARTCC:
-				if facility.AbbreviatedFacilityID != "" {
-					legacyID = facility.AbbreviatedFacilityID + routingID
-				}
-			case av.FacilityTypeAdjacentTRACON:
-				if facility.AdjacentTRACONID != "" {
-					legacyID = facility.AdjacentTRACONID + routingID
-				}
-			case av.FacilityTypeLocalSTARS:
-				legacyID = routingID
-			}
-
-			if legacyID != "" {
-				if canonical, ok := aliases[legacyID]; ok {
-					*s = canonical
-					return
-				}
-
-				for _, ctrl := range sg.ControlPositions {
-					if ctrl == nil {
-						continue
-					}
-					if id := ctrl.FacilityPositionID(); id != "" && id == *s {
-						*s = ctrl.Position
-						return
-					}
-					if id := ctrl.Id(); id != "" && id == legacyID {
-						*s = ctrl.Position
-						return
-					}
-				}
-			}
-		}
-
-		var match *av.Controller
-		for _, ctrl := range sg.ControlPositions {
-			if ctrl == nil {
-				continue
-			}
-			if ctrl.SectorRoutingID() != routingID {
-				continue
-			}
-			if match != nil {
-				match = nil
-				break
-			}
-			match = ctrl
-		}
-
-		if match != nil {
-			*s = match.Position
 		}
 	}
 	rewriteWaypoints := func(wp av.WaypointArray) {
@@ -1263,7 +1189,6 @@ func (sg *scenarioGroup) rewriteControllers(e *util.ErrorLogger) {
 			rewriteWaypoints(flow.Overflights[i].Waypoints)
 		}
 	}
-
 }
 
 func PostDeserializeFacilityAdaptation(s *sim.FacilityAdaptation, e *util.ErrorLogger, sg *scenarioGroup,
