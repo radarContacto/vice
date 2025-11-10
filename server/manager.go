@@ -83,12 +83,17 @@ type connectionState struct {
 }
 
 type SimScenarioConfiguration struct {
-	SelectedController  string
-	SelectedSplit       string
-	SplitConfigurations av.SplitConfigurationSet
-	PrimaryAirport      string
-	MagneticVariation   float32
-	WindSpecifier       *wx.WindSpecifier
+	SelectedController    string
+	SelectedSplit         string
+	SplitConfigurations   av.SplitConfigurationSet
+	SoloController        string
+	SoloControllerConfig  *sim.ControllerConfiguration
+	MultiControllerConfig *sim.ControllerConfiguration
+	VirtualPositionConfig map[string]sim.ControllerPositionConfig
+	FixPairAssignments    map[string]map[sim.FixPairKey]string
+	PrimaryAirport        string
+	MagneticVariation     float32
+	WindSpecifier         *wx.WindSpecifier
 
 	LaunchConfig sim.LaunchConfig
 
@@ -463,6 +468,10 @@ func (sm *SimManager) makeSimConfiguration(config *NewSimConfiguration, lg *log.
 		ControllerAirspace:          sc.Airspace,
 		ControlPositions:            sg.ControlPositions,
 		VirtualControllers:          sc.VirtualControllers,
+		SoloControllerConfig:        sc.SoloControllerConfig,
+		MultiControllerConfig:       sc.MultiControllerConfig,
+		VirtualPositionConfig:       sc.VirtualPositionConfig,
+		FixPairAssignments:          sc.FixPairAssignments,
 		SignOnPositions:             make(map[string]*av.Controller),
 		TTSProvider:                 sm.tts,
 		WXProvider:                  sm.wxProvider,
