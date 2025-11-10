@@ -210,6 +210,8 @@ func newState(config NewSimConfiguration, startTime time.Time, manifest *VideoMa
 		ss.FacilityAdaptation.RestrictionAreas = append(ss.FacilityAdaptation.RestrictionAreas, ra)
 	}
 
+	addedControllers := make(map[string]struct{})
+
 	for _, callsign := range config.VirtualControllers {
 		// Filter out any that are actually human-controlled positions.
 		if callsign == ss.PrimaryController {
@@ -223,8 +225,18 @@ func newState(config NewSimConfiguration, startTime time.Time, manifest *VideoMa
 
 		if ctrl, ok := config.ControlPositions[callsign]; ok {
 			ss.Controllers[callsign] = ctrl
+			addedControllers[callsign] = struct{}{}
 		} else {
 			lg.Errorf("%s: controller not found in ControlPositions??", callsign)
+		}
+	}
+
+	for _, callsign := range config.LocalControllers {
+		if _, seen := addedControllers[callsign]; seen {
+			continue
+		}
+		if ctrl, ok := config.ControlPositions[callsign]; ok {
+			ss.Controllers[callsign] = ctrl
 		}
 	}
 

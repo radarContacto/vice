@@ -29,6 +29,7 @@
           ],
           "destination": "KBWI",
           "exit": "PUT",
+          "exit_fix": "PUT",
           "route": "PUT NELIE Q75 MXE V378 NUGGY TRISH3"
         }
       ],

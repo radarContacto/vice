@@ -472,6 +472,7 @@ func (sm *SimManager) makeSimConfiguration(config *NewSimConfiguration, lg *log.
 		MultiControllerConfig:       sc.MultiControllerConfig,
 		VirtualPositionConfig:       sc.VirtualPositionConfig,
 		FixPairAssignments:          sc.FixPairAssignments,
+		LocalControllers:            sc.LocalControllers,
 		SignOnPositions:             make(map[string]*av.Controller),
 		TTSProvider:                 sm.tts,
 		WXProvider:                  sm.wxProvider,
@@ -494,6 +495,9 @@ func (sm *SimManager) makeSimConfiguration(config *NewSimConfiguration, lg *log.
 	}
 
 	add := func(callsign string) {
+		if _, virtual := sc.VirtualPositionConfig[callsign]; virtual {
+			return
+		}
 		if ctrl, ok := sg.ControlPositions[callsign]; !ok {
 			lg.Errorf("%s: control position unknown??!", callsign)
 		} else {

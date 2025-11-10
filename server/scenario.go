@@ -82,6 +82,7 @@ type scenario struct {
 	SplitConfigurations av.SplitConfigurationSet `json:"-"`
 	DefaultSplit        string                   `json:"-"`
 	VirtualControllers  []string                 `json:"-"`
+	LocalControllers    []string                 `json:"-"`
 
 	SoloControllerConfig  *sim.ControllerConfiguration            `json:"-"`
 	MultiControllerConfig *sim.ControllerConfiguration            `json:"-"`
@@ -416,6 +417,35 @@ func (s *scenario) initializeControllerConfigurations(sg *scenarioGroup, e *util
 		}
 	} else {
 		s.VirtualControllers = nil
+	}
+
+	localFacilities := make(map[string]struct{})
+	for id, facility := range sg.Facilities {
+		if facility == nil {
+			continue
+		}
+		if facility.FacilityType == av.FacilityTypeLocalSTARS {
+			localFacilities[strings.ToUpper(strings.TrimSpace(id))] = struct{}{}
+		}
+	}
+
+	if len(localFacilities) > 0 {
+		var locals []string
+		for id, ctrl := range sg.ControlPositions {
+			if ctrl == nil {
+				continue
+			}
+			fac := strings.ToUpper(strings.TrimSpace(ctrl.Facility))
+			if fac == "" {
+				continue
+			}
+			if _, ok := localFacilities[fac]; ok {
+				locals = append(locals, id)
+			}
+		}
+		s.LocalControllers = sanitizePositionList(locals)
+	} else {
+		s.LocalControllers = nil
 	}
 }
 
@@ -1277,7 +1307,20 @@ func (sg *scenarioGroup) rewriteControllers(e *util.ErrorLogger) {
 		originalPosition := position
 		ctrl.Position = originalPosition
 
-		canonicalID := ctrl.Id()
+		facilityType := av.FacilityType("")
+		if ctrl.Facility != "" {
+			if fac, ok := sg.Facilities[strings.ToUpper(ctrl.Facility)]; ok && fac != nil {
+				facilityType = fac.FacilityType
+			}
+		}
+
+		canonicalID := ""
+		if facilityType != av.FacilityTypeLocalSTARS {
+			canonicalID = ctrl.FacilityPositionID()
+		}
+		if canonicalID == "" {
+			canonicalID = ctrl.Id()
+		}
 		if canonicalID == "" {
 			canonicalID = ctrl.FacilityPositionID()
 		}
@@ -2294,6 +2337,17 @@ func CreateNewSimConfiguration(config *Configuration, scenarioGroup *scenarioGro
 		return nil, fmt.Errorf("scenario configuration %s not found", scenarioName)
 	}
 
+	signOnPositions := make(map[string]*av.Controller)
+	for id, ctrl := range scenarioGroup.ControlPositions {
+		if ctrl == nil {
+			continue
+		}
+		if _, virtual := scenario.VirtualPositionConfig[id]; virtual {
+			continue
+		}
+		signOnPositions[id] = ctrl
+	}
+
 	newSimConfig := &sim.NewSimConfiguration{
 		TRACON:             scenarioGroup.TRACON,
 		Description:        scenarioName,
@@ -2306,7 +2360,7 @@ func CreateNewSimConfiguration(config *Configuration, scenarioGroup *scenarioGro
 		VFRReportingPoints: scenarioGroup.VFRReportingPoints,
 		ControlPositions:   scenarioGroup.ControlPositions,
 		PrimaryController:  scenario.SoloController,
-		SignOnPositions:    scenarioGroup.ControlPositions,
+		SignOnPositions:    signOnPositions,
 		InboundFlows:       scenarioGroup.InboundFlows,
 		FacilityAdaptation: deep.MustCopy(scenarioGroup.FacilityAdaptation),
 		ReportingPoints:    scenarioGroup.ReportingPoints,
@@ -2320,6 +2374,7 @@ func CreateNewSimConfiguration(config *Configuration, scenarioGroup *scenarioGro
 		Airspace:           scenarioGroup.Airspace,
 		ControllerAirspace: scenario.Airspace,
 		VirtualControllers: scenario.VirtualControllers,
+		LocalControllers:   scenario.LocalControllers,
 	}
 
 	return newSimConfig, nil

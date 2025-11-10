@@ -227,6 +227,7 @@ type NewSimConfiguration struct {
 	PrimaryController  string
 	ControllerAirspace map[string][]string
 	VirtualControllers []string
+	LocalControllers   []string
 	MultiControllers   av.SplitConfiguration
 	SignOnPositions    map[string]*av.Controller
 
@@ -566,10 +567,6 @@ func (s *Sim) SignOn(tcp string, instructor bool, disableTextToSpeech bool) (*St
 func (s *Sim) signOn(tcp string, instructor bool, disableTextToSpeech bool) error {
 	if _, ok := s.humanControllers[tcp]; ok {
 		return ErrControllerAlreadySignedIn
-	}
-	if _, ok := s.State.Controllers[tcp]; ok {
-		// Trying to sign in to a virtual position.
-		return av.ErrInvalidController
 	}
 	if _, ok := s.SignOnPositions[tcp]; !ok {
 		return av.ErrNoController
