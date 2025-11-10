@@ -69,6 +69,9 @@ type Arrival struct {
 	Route           string                              `json:"route"`
 	STAR            string                              `json:"star"`
 
+	EntryFix string `json:"entry_fix"`
+	ExitFix  string `json:"exit_fix"`
+
 	InitialController   string  `json:"initial_controller"`
 	InitialAltitude     float32 `json:"initial_altitude"`
 	AssignedAltitude    float32 `json:"assigned_altitude"`
@@ -378,6 +381,7 @@ type FlightPlan struct {
 	ArrivalAirport   string
 	AlternateAirport string
 	Exit             string
+	ExitFix          string
 	Route            string
 	Remarks          string
 }
@@ -907,6 +911,16 @@ func (ar *Arrival) PostDeserialize(loc Locator, nmPerLongitude float32, magnetic
 
 	if ar.InitialSpeed == 0 {
 		e.ErrorString("must specify \"initial_speed\"")
+	}
+
+	ar.EntryFix = strings.ToUpper(strings.TrimSpace(ar.EntryFix))
+	if ar.EntryFix == "" {
+		e.ErrorString("must specify \"entry_fix\"")
+	}
+
+	ar.ExitFix = strings.ToUpper(strings.TrimSpace(ar.ExitFix))
+	if ar.ExitFix == "" {
+		e.ErrorString("must specify \"exit_fix\"")
 	}
 
 	if ar.InitialController == "" {
