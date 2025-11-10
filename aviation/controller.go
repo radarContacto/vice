@@ -41,6 +41,29 @@ func (c Controller) ERAMID() string { // For display
 	return c.FacilityIdentifier + c.TCP
 }
 
+// SectorRoutingID returns the controller's routing identifier with any
+// facility prefix trimmed. ARTCC sectors include the abbreviated facility ID
+// in TCP, so strip it for consistency with local facilities when constructing
+// composite identifiers.
+func (c Controller) SectorRoutingID() string {
+	routingID := c.TCP
+	if c.FacilityIdentifier != "" && strings.HasPrefix(routingID, c.FacilityIdentifier) {
+		routingID = strings.TrimPrefix(routingID, c.FacilityIdentifier)
+	}
+	return routingID
+}
+
+// FacilityPositionID returns the fully-qualified identifier that combines the
+// facility identifier used in scenario definitions with the controller's
+// sector routing identifier. This is the canonical identifier referenced by
+// scenarios when selecting controllers.
+func (c Controller) FacilityPositionID() string {
+	if c.Facility == "" || c.TCP == "" {
+		return ""
+	}
+	return c.Facility + "_" + c.SectorRoutingID()
+}
+
 // split -> config
 type SplitConfigurationSet map[string]SplitConfiguration
 
@@ -53,6 +76,40 @@ type MultiUserController struct {
 	Departures       []string `json:"departures"`
 	Arrivals         []string `json:"arrivals"` // TEMPORARY for inbound flows transition
 	InboundFlows     []string `json:"inbound_flows"`
+}
+
+// FacilityType enumerates the supported facility classifications used when
+// defining controller positions within a scenario file.
+type FacilityType string
+
+const (
+	FacilityTypeAdjacentTRACON FacilityType = "T"
+	FacilityTypeLocalSTARS     FacilityType = "L"
+	FacilityTypeARTCC          FacilityType = "A"
+)
+
+// FacilityControlPosition describes a controller position that belongs to a
+// scenario facility definition.
+type FacilityControlPosition struct {
+	SectorRoutingID string    `json:"sector_routing_id"`
+	Frequency       Frequency `json:"frequency"`
+	RadioName       string    `json:"radio_name"`
+	ScopeChar       string    `json:"scope_char"`
+	DefaultAirport  string    `json:"default_airport"`
+	Facility        string    `json:"facility"`
+	Instructor      bool      `json:"instructor"`
+	RPO             bool      `json:"rpo"`
+}
+
+// Facility captures the metadata associated with a facility block in the
+// scenario definition. Each facility hosts zero or more control positions.
+type Facility struct {
+	FacilityType          FacilityType              `json:"facility_type"`
+	FacilityName          string                    `json:"facility_name"`
+	AdjacentTRACONID      string                    `json:"adjacent_tracon_id"`
+	TerminalSectors       []string                  `json:"terminal_sectors"`
+	AbbreviatedFacilityID string                    `json:"abbreviated_facility_id"`
+	ControlPositions      []FacilityControlPosition `json:"control_positions"`
 }
 
 ///////////////////////////////////////////////////////////////////////////
