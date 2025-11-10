@@ -169,6 +169,28 @@ type ArrivalRunway struct {
 	Runway  string `json:"runway"`
 }
 
+// FixPairKey uniquely identifies a fix-pair assignment used to determine
+// initial controller ownership for a flight based on its entry and exit fixes
+// as well as its flight type.
+type FixPairKey struct {
+	FlightType string
+	EntryFix   string
+	ExitFix    string
+}
+
+// ControllerPositionConfig describes how a controller position consolidates
+// other positions within a scenario configuration.
+type ControllerPositionConfig struct {
+	ConsolidatedPositions []string
+}
+
+// ControllerConfiguration captures the consolidation rules that apply for a
+// particular sector configuration within a scenario.
+type ControllerConfiguration struct {
+	ConfigurationID string
+	Positions       map[string]ControllerPositionConfig
+}
+
 type Handoff struct {
 	AutoAcceptTime    time.Time
 	ReceivingFacility string // only for auto accept
@@ -207,6 +229,11 @@ type NewSimConfiguration struct {
 	VirtualControllers []string
 	MultiControllers   av.SplitConfiguration
 	SignOnPositions    map[string]*av.Controller
+
+	SoloControllerConfig  *ControllerConfiguration
+	MultiControllerConfig *ControllerConfiguration
+	VirtualPositionConfig map[string]ControllerPositionConfig
+	FixPairAssignments    map[string]map[FixPairKey]string
 
 	TFRs               []av.TFR
 	FacilityAdaptation FacilityAdaptation
