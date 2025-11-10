@@ -55,11 +55,39 @@ type scenarioGroup struct {
 	FacilityAdaptation sim.FacilityAdaptation `json:"stars_config"`
 }
 
+type scenarioSoloPosition struct {
+	ConsolidatedPositions []string `json:"consolidated_positions"`
+}
+
+type scenarioSoloConfiguration struct {
+	ConfigurationID string                           `json:"configuration_id"`
+	SoloPosition    map[string]*scenarioSoloPosition `json:"solo_position"`
+}
+
+type scenarioPositionSpec struct {
+	ConsolidatedPositions []string `json:"consolidated_positions"`
+}
+
+type scenarioMultiConfiguration struct {
+	ConfigurationID string                           `json:"configuration_id"`
+	Positions       map[string]*scenarioPositionSpec `json:"positions"`
+}
+
 type scenario struct {
-	SoloController      string                   `json:"solo_controller"`
-	SplitConfigurations av.SplitConfigurationSet `json:"multi_controllers"`
-	DefaultSplit        string                   `json:"default_split"`
-	VirtualControllers  []string                 `json:"controllers"`
+	SoloConfiguration    *scenarioSoloConfiguration       `json:"solo_configuration"`
+	MultiConfiguration   *scenarioMultiConfiguration      `json:"multi_configuration"`
+	VirtualPositionSpecs map[string]*scenarioPositionSpec `json:"virtual_positions"`
+
+	SoloController      string                   `json:"-"`
+	SplitConfigurations av.SplitConfigurationSet `json:"-"`
+	DefaultSplit        string                   `json:"-"`
+	VirtualControllers  []string                 `json:"-"`
+	LocalControllers    []string                 `json:"-"`
+
+	SoloControllerConfig  *sim.ControllerConfiguration            `json:"-"`
+	MultiControllerConfig *sim.ControllerConfiguration            `json:"-"`
+	VirtualPositionConfig map[string]sim.ControllerPositionConfig `json:"-"`
+	FixPairAssignments    map[string]map[sim.FixPairKey]string    `json:"-"`
 
 	WindSpecifier *wx.WindSpecifier `json:"wind,omitempty"`
 
@@ -80,6 +108,421 @@ type scenario struct {
 	DefaultMaps     []string      `json:"default_maps"`
 	DefaultMapGroup string        `json:"default_map_group" scope:"eram"`
 	VFRRateScale    *float32      `json:"vfr_rate_scale"`
+}
+
+func sanitizePositionList(values []string) []string {
+	seen := make(map[string]struct{})
+	var result []string
+	for _, v := range values {
+		v = strings.TrimSpace(v)
+		if v == "" {
+			continue
+		}
+		if _, ok := seen[v]; ok {
+			continue
+		}
+		seen[v] = struct{}{}
+		result = append(result, v)
+	}
+	slices.Sort(result)
+	return result
+}
+
+func (sg *scenarioGroup) defaultLocalFacility() string {
+	for id, facility := range sg.Facilities {
+		if facility == nil {
+			continue
+		}
+		if facility.FacilityType == av.FacilityTypeLocalSTARS {
+			return id
+		}
+	}
+	return ""
+}
+
+func (sg *scenarioGroup) canonicalControllerIdentifier(identifier string) (string, bool) {
+	identifier = strings.TrimSpace(identifier)
+	if identifier == "" {
+		return "", false
+	}
+
+	facilityID := ""
+	if fac, routing, ok := strings.Cut(identifier, "_"); ok && routing != "" {
+		facilityID = fac
+	} else {
+		facilityID = sg.defaultLocalFacility()
+	}
+
+	facilityID = strings.ToUpper(strings.TrimSpace(facilityID))
+
+	if facilityID != "" {
+		if canonical, ok := sg.resolveControllerByFacility(facilityID, identifier); ok {
+			return canonical, true
+		}
+	}
+
+	return sg.resolveControllerByFacility("", identifier)
+}
+
+func (sg *scenarioGroup) resolveControllerByFacility(facilityID, identifier string) (string, bool) {
+	identifier = strings.TrimSpace(identifier)
+	if identifier == "" {
+		return "", false
+	}
+
+	// Direct lookups first.
+	if ctrl, ok := sg.ControlPositions[identifier]; ok && ctrl != nil {
+		if facilityID == "" || strings.EqualFold(ctrl.Facility, facilityID) {
+			return ctrl.Position, true
+		}
+	}
+
+	upper := strings.ToUpper(identifier)
+	if ctrl, ok := sg.ControlPositions[upper]; ok && ctrl != nil {
+		if facilityID == "" || strings.EqualFold(ctrl.Facility, facilityID) {
+			return ctrl.Position, true
+		}
+	}
+
+	// Try to match by facility-qualified identifier
+	routingOnly := ""
+	if fac, routing, ok := strings.Cut(upper, "_"); ok && routing != "" {
+		routingOnly = routing
+		if strings.EqualFold(fac, facilityID) {
+			if ctrl, ok := sg.ControlPositions[fac+"_"+routing]; ok && ctrl != nil {
+				return ctrl.Position, true
+			}
+		}
+	}
+
+	for _, ctrl := range sg.ControlPositions {
+		if ctrl == nil {
+			continue
+		}
+		if facilityID != "" && !strings.EqualFold(ctrl.Facility, facilityID) {
+			continue
+		}
+		if strings.EqualFold(ctrl.Position, identifier) || strings.EqualFold(ctrl.FacilityPositionID(), identifier) ||
+			strings.EqualFold(ctrl.Id(), identifier) {
+			return ctrl.Position, true
+		}
+		if strings.EqualFold(ctrl.SectorRoutingID(), upper) || strings.EqualFold(ctrl.TCP, upper) ||
+			(routingOnly != "" && strings.EqualFold(ctrl.SectorRoutingID(), routingOnly)) {
+			return ctrl.Position, true
+		}
+	}
+
+	return "", false
+}
+
+func (s *scenario) initializeControllerConfigurations(sg *scenarioGroup, e *util.ErrorLogger) {
+	if s.SoloConfiguration == nil {
+		e.ErrorString("must specify \"solo_configuration\"")
+		return
+	}
+
+	s.SoloControllerConfig = &sim.ControllerConfiguration{
+		Positions: make(map[string]sim.ControllerPositionConfig),
+	}
+
+	s.SoloConfiguration.ConfigurationID = strings.ToUpper(strings.TrimSpace(s.SoloConfiguration.ConfigurationID))
+	if s.SoloConfiguration.ConfigurationID == "" {
+		e.ErrorString("\"solo_configuration.configuration_id\" must be specified")
+	}
+	s.SoloControllerConfig.ConfigurationID = s.SoloConfiguration.ConfigurationID
+
+	if len(s.SoloConfiguration.SoloPosition) != 1 {
+		e.ErrorString("\"solo_configuration.solo_position\" must specify exactly one controller")
+	}
+
+	positions := make(map[string]sim.ControllerPositionConfig)
+	for ctrl, spec := range s.SoloConfiguration.SoloPosition {
+		original := strings.TrimSpace(ctrl)
+		if original == "" {
+			e.ErrorString("\"solo_configuration.solo_position\" must not contain empty controller identifiers")
+			continue
+		}
+		if spec == nil {
+			e.ErrorString("definition for solo controller %q is missing", original)
+			continue
+		}
+
+		canonical, ok := sg.canonicalControllerIdentifier(original)
+		if !ok {
+			e.ErrorString("controller %q for \"solo_configuration\" is unknown", original)
+			continue
+		}
+
+		consolidated := make([]string, 0, len(spec.ConsolidatedPositions))
+		seen := make(map[string]struct{})
+		for _, c := range spec.ConsolidatedPositions {
+			c = strings.TrimSpace(c)
+			if c == "" {
+				continue
+			}
+			resolved, rok := sg.canonicalControllerIdentifier(c)
+			if !rok {
+				e.ErrorString("consolidated position %q for solo controller %q is unknown", c, original)
+				continue
+			}
+			if _, dup := seen[resolved]; dup {
+				continue
+			}
+			seen[resolved] = struct{}{}
+			consolidated = append(consolidated, resolved)
+		}
+		slices.Sort(consolidated)
+
+		positions[canonical] = sim.ControllerPositionConfig{ConsolidatedPositions: consolidated}
+		s.SoloController = canonical
+	}
+
+	for key, cfg := range positions {
+		s.SoloControllerConfig.Positions[key] = cfg
+	}
+
+	if s.MultiConfiguration != nil {
+		s.MultiConfiguration.ConfigurationID = strings.ToUpper(strings.TrimSpace(s.MultiConfiguration.ConfigurationID))
+		if s.MultiConfiguration.ConfigurationID == "" {
+			e.ErrorString("\"multi_configuration.configuration_id\" must be specified")
+		}
+		if s.SoloControllerConfig.ConfigurationID != "" && s.MultiConfiguration.ConfigurationID != "" &&
+			!strings.EqualFold(s.SoloControllerConfig.ConfigurationID, s.MultiConfiguration.ConfigurationID) {
+			e.ErrorString("\"multi_configuration.configuration_id\" must match \"solo_configuration.configuration_id\"")
+		}
+
+		positions := make(map[string]sim.ControllerPositionConfig)
+		var keys []string
+		normalized := make(map[string]*scenarioPositionSpec)
+		for ctrl, spec := range s.MultiConfiguration.Positions {
+			original := strings.TrimSpace(ctrl)
+			if original == "" {
+				e.ErrorString("\"multi_configuration.positions\" must not contain empty controller identifiers")
+				continue
+			}
+			if spec == nil {
+				e.ErrorString("definition for multi controller %q is missing", original)
+				continue
+			}
+
+			canonical, ok := sg.canonicalControllerIdentifier(original)
+			if !ok {
+				e.ErrorString("controller %q in \"multi_configuration\" is unknown", original)
+				continue
+			}
+
+			consolidated := make([]string, 0, len(spec.ConsolidatedPositions))
+			seen := make(map[string]struct{})
+			for _, c := range spec.ConsolidatedPositions {
+				c = strings.TrimSpace(c)
+				if c == "" {
+					continue
+				}
+				resolved, rok := sg.canonicalControllerIdentifier(c)
+				if !rok {
+					e.ErrorString("consolidated position %q for controller %q is unknown", c, original)
+					continue
+				}
+				if _, dup := seen[resolved]; dup {
+					continue
+				}
+				seen[resolved] = struct{}{}
+				consolidated = append(consolidated, resolved)
+			}
+			slices.Sort(consolidated)
+
+			positions[canonical] = sim.ControllerPositionConfig{ConsolidatedPositions: consolidated}
+			keys = append(keys, canonical)
+			normalized[canonical] = spec
+		}
+
+		if len(positions) == 0 {
+			e.ErrorString("\"multi_configuration.positions\" must specify at least one controller")
+		}
+
+		s.MultiControllerConfig = &sim.ControllerConfiguration{
+			ConfigurationID: s.MultiConfiguration.ConfigurationID,
+			Positions:       positions,
+		}
+
+		slices.Sort(keys)
+		cfg := make(av.SplitConfiguration)
+		for i, ctrl := range keys {
+			cfg[ctrl] = &av.MultiUserController{Primary: i == 0}
+		}
+		s.SplitConfigurations = av.SplitConfigurationSet{s.MultiConfiguration.ConfigurationID: cfg}
+		s.DefaultSplit = s.MultiConfiguration.ConfigurationID
+		if len(normalized) > 0 {
+			s.MultiConfiguration.Positions = normalized
+		}
+	} else {
+		s.MultiControllerConfig = nil
+		s.SplitConfigurations = av.SplitConfigurationSet{
+			"default": {
+				s.SoloController: &av.MultiUserController{Primary: true},
+			},
+		}
+		s.DefaultSplit = "default"
+	}
+
+	s.VirtualPositionConfig = make(map[string]sim.ControllerPositionConfig)
+	if len(s.VirtualPositionSpecs) > 0 {
+		var vkeys []string
+		normalized := make(map[string]*scenarioPositionSpec)
+		for ctrl, spec := range s.VirtualPositionSpecs {
+			original := strings.TrimSpace(ctrl)
+			if original == "" {
+				e.ErrorString("\"virtual_positions\" must not contain empty controller identifiers")
+				continue
+			}
+			if spec == nil {
+				e.ErrorString("definition for virtual controller %q is missing", original)
+				continue
+			}
+
+			canonical, ok := sg.canonicalControllerIdentifier(original)
+			if !ok {
+				e.ErrorString("virtual controller %q is unknown", original)
+				continue
+			}
+
+			consolidated := make([]string, 0, len(spec.ConsolidatedPositions))
+			seen := make(map[string]struct{})
+			for _, c := range spec.ConsolidatedPositions {
+				c = strings.TrimSpace(c)
+				if c == "" {
+					continue
+				}
+				resolved, rok := sg.canonicalControllerIdentifier(c)
+				if !rok {
+					e.ErrorString("virtual consolidated position %q for %q is unknown", c, original)
+					continue
+				}
+				if _, dup := seen[resolved]; dup {
+					continue
+				}
+				seen[resolved] = struct{}{}
+				consolidated = append(consolidated, resolved)
+			}
+			slices.Sort(consolidated)
+
+			s.VirtualPositionConfig[canonical] = sim.ControllerPositionConfig{ConsolidatedPositions: consolidated}
+			vkeys = append(vkeys, canonical)
+			normalized[canonical] = spec
+		}
+		slices.Sort(vkeys)
+		s.VirtualControllers = vkeys
+		if len(normalized) > 0 {
+			s.VirtualPositionSpecs = normalized
+		}
+	} else {
+		s.VirtualControllers = nil
+	}
+
+	localFacilities := make(map[string]struct{})
+	for id, facility := range sg.Facilities {
+		if facility == nil {
+			continue
+		}
+		if facility.FacilityType == av.FacilityTypeLocalSTARS {
+			localFacilities[strings.ToUpper(strings.TrimSpace(id))] = struct{}{}
+		}
+	}
+
+	if len(localFacilities) > 0 {
+		var locals []string
+		for id, ctrl := range sg.ControlPositions {
+			if ctrl == nil {
+				continue
+			}
+			fac := strings.ToUpper(strings.TrimSpace(ctrl.Facility))
+			if fac == "" {
+				continue
+			}
+			if _, ok := localFacilities[fac]; ok {
+				locals = append(locals, id)
+			}
+		}
+		s.LocalControllers = sanitizePositionList(locals)
+	} else {
+		s.LocalControllers = nil
+	}
+}
+
+func (s *scenario) initializeFixPairAssignments(sg *scenarioGroup, e *util.ErrorLogger) {
+	s.FixPairAssignments = make(map[string]map[sim.FixPairKey]string)
+
+	var facilityID string
+	if ctrl, ok := sg.ControlPositions[s.SoloController]; ok && ctrl != nil {
+		facilityID = ctrl.Facility
+	}
+
+	if facilityID == "" {
+		e.ErrorString("unable to determine facility for solo controller %q", s.SoloController)
+		return
+	}
+
+	facilityConfig := sg.FacilityAdaptation.TCPConfiguration.FixPairConfiguration[facilityID]
+	if facilityConfig == nil {
+		e.ErrorString("no \"fix_pair_configuration\" defined for facility %q", facilityID)
+		return
+	}
+
+	ensureConfigMap := func(id string) {
+		if id == "" {
+			return
+		}
+		id = strings.ToUpper(id)
+		if _, ok := s.FixPairAssignments[id]; !ok {
+			s.FixPairAssignments[id] = make(map[sim.FixPairKey]string)
+		}
+	}
+
+	ensureConfigMap(s.SoloControllerConfig.ConfigurationID)
+	if s.MultiControllerConfig != nil {
+		ensureConfigMap(s.MultiControllerConfig.ConfigurationID)
+	}
+
+	relevantConfig := func(id string) bool {
+		if id == "" {
+			return false
+		}
+		id = strings.ToUpper(id)
+		if s.SoloControllerConfig != nil && strings.EqualFold(id, s.SoloControllerConfig.ConfigurationID) {
+			return true
+		}
+		if s.MultiControllerConfig != nil && strings.EqualFold(id, s.MultiControllerConfig.ConfigurationID) {
+			return true
+		}
+		return false
+	}
+
+	for _, assignment := range facilityConfig.FixPairTCPAssignments {
+		owner, ok := sg.resolveControllerByFacility(facilityID, assignment.TCP)
+		if !ok {
+			e.ErrorString("tcp %q in \"fix_pair_tcp_assignments\" is unknown for facility %q", assignment.TCP, facilityID)
+			continue
+		}
+
+		flightType := strings.ToUpper(strings.TrimSpace(assignment.FlightType))
+		entryFix := strings.ToUpper(strings.TrimSpace(assignment.EntryFix))
+		exitFix := strings.ToUpper(strings.TrimSpace(assignment.ExitFix))
+
+		if flightType == "" || entryFix == "" || exitFix == "" {
+			continue
+		}
+
+		key := sim.FixPairKey{FlightType: flightType, EntryFix: entryFix, ExitFix: exitFix}
+
+		for _, cfg := range assignment.Configuration {
+			if !relevantConfig(cfg) {
+				continue
+			}
+			cfg = strings.ToUpper(cfg)
+			ensureConfigMap(cfg)
+			s.FixPairAssignments[cfg][key] = owner
+		}
+	}
 }
 
 func (s *scenario) PostDeserialize(sg *scenarioGroup, e *util.ErrorLogger, manifest *sim.VideoMapManifest) {
@@ -103,65 +546,17 @@ func (s *scenario) PostDeserialize(sg *scenarioGroup, e *util.ErrorLogger, manif
 			s.ArrivalGroupDefaultRates = nil
 		}
 	}
+	s.initializeControllerConfigurations(sg, e)
+	s.initializeFixPairAssignments(sg, e)
+
 	for name, controllers := range s.SplitConfigurations {
-		e.Push("\"multi_controllers\": split \"" + name + "\"")
-		for _, ctrl := range controllers {
-			if len(ctrl.Arrivals) > 0 {
-				if len(ctrl.InboundFlows) > 0 {
-					e.ErrorString("cannot specify both \"arrivals\" and \"inbound_flows\"")
-				} else {
-					ctrl.InboundFlows = ctrl.Arrivals
-					ctrl.Arrivals = nil
-				}
+		e.Push(fmt.Sprintf("controller configuration %q", name))
+		for callsign := range controllers {
+			if _, ok := sg.ControlPositions[callsign]; !ok {
+				e.ErrorString("controller %q not defined in the scenario group's \"control_positions\"", callsign)
 			}
 		}
 		e.Pop()
-	}
-
-	// Auto-populate SplitConfigurations for single-controller scenarios
-	if s.SoloController != "" && len(s.SplitConfigurations) == 0 {
-		// Collect departure airports that don't have virtual controllers
-		// (airports with virtual controllers are handled by those
-		// controllers, not the human).
-		departures := make(map[string]bool)
-		for _, rwy := range s.DepartureRunways {
-			if ap, ok := sg.Airports[rwy.Airport]; ok && ap.DepartureController == "" {
-				departures[rwy.Airport] = true
-			}
-		}
-		departureList := slices.Collect(maps.Keys(departures))
-
-		// Collect inbound flows that have handoffs to human controllers.
-		var inboundFlows []string
-		for flowName := range s.InboundFlowDefaultRates {
-			if flow, ok := sg.InboundFlows[flowName]; ok {
-				// Check if this flow has arrivals or overflights with handoffs
-				hasHandoff := len(flow.Arrivals) > 0
-				if !hasHandoff {
-					// Check if any overflight has a human handoff
-					hasHandoff = slices.ContainsFunc(flow.Overflights, func(of av.Overflight) bool {
-						return slices.ContainsFunc(of.Waypoints, func(wp av.Waypoint) bool {
-							return wp.HumanHandoff
-						})
-					})
-				}
-				if hasHandoff {
-					inboundFlows = append(inboundFlows, flowName)
-				}
-			}
-		}
-
-		// Create the default split configuration
-		s.SplitConfigurations = av.SplitConfigurationSet{
-			"default": av.SplitConfiguration{
-				s.SoloController: &av.MultiUserController{
-					Primary:      true,
-					Departures:   departureList,
-					InboundFlows: inboundFlows,
-				},
-			},
-		}
-		s.DefaultSplit = "default"
 	}
 
 	for ctrl, vnames := range s.Airspace {
@@ -277,7 +672,7 @@ func (s *scenario) PostDeserialize(sg *scenarioGroup, e *util.ErrorLogger, manif
 	}
 
 	if _, ok := sg.ControlPositions[s.SoloController]; s.SoloController != "" && !ok {
-		e.ErrorString("controller %q for \"solo_controller\" is unknown", s.SoloController)
+		e.ErrorString("controller %q for \"solo_configuration\" is unknown", s.SoloController)
 	}
 
 	// Figure out which airports/runways and airports/SIDs are used in the scenario.
@@ -356,174 +751,14 @@ func (s *scenario) PostDeserialize(sg *scenarioGroup, e *util.ErrorLogger, manif
 		}
 	}
 
-	// Various multi_controllers validations
-	if len(s.SplitConfigurations) > 0 {
-		if len(s.SplitConfigurations) == 1 && s.DefaultSplit == "" {
-			// Set the default split to be the single specified controller
-			// assignment.
-			for s.DefaultSplit = range s.SplitConfigurations {
-			}
-		} else if s.DefaultSplit == "" {
-			e.ErrorString("multiple splits specified in \"multi_controllers\" but no \"default_split\" specified")
-		} else if _, ok := s.SplitConfigurations[s.DefaultSplit]; !ok {
-			e.ErrorString("did not find \"default_split\" %q in \"multi_controllers\" splits", s.DefaultSplit)
+	if s.DefaultSplit != "" {
+		if _, ok := s.SplitConfigurations[s.DefaultSplit]; !ok {
+			e.ErrorString("default controller configuration %q is not defined", s.DefaultSplit)
 		}
-	}
-	for name, controllers := range s.SplitConfigurations {
-		primaryController := ""
-		e.Push("\"multi_controllers\": split \"" + name + "\"")
-
-		haveDepartureSIDSpec, haveDepartureRunwaySpec := false, false
-
-		for callsign, ctrl := range controllers {
-			e.Push(callsign)
-			if ctrl.Primary {
-				if primaryController != "" {
-					e.ErrorString("multiple controllers specified as \"primary\": %s %s",
-						primaryController, callsign)
-				} else {
-					primaryController = callsign
-				}
-			}
-
-			if _, ok := sg.ControlPositions[callsign]; !ok {
-				e.ErrorString("controller %q not defined in the scenario group's \"control_positions\"", callsign)
-			}
-
-			// Make sure any airports claimed for departures are valid
-			for _, airportSID := range ctrl.Departures {
-				ap, sidRunway, haveSIDRunway := strings.Cut(airportSID, "/")
-				if sids, ok := activeAirportSIDs[ap]; !ok {
-					e.ErrorString("airport %q is not departing aircraft in this scenario", ap)
-				} else if haveSIDRunway {
-					// If there's something after a slash, make sure it's
-					// either a valid SID or runway.
-					_, okSID := sids[sidRunway]
-					_, okRunway := activeAirportRunways[ap][sidRunway]
-					if !okSID && !okRunway {
-						e.ErrorString("%q at airport %q is neither an active runway or SID in this scenario", sidRunway, ap)
-					}
-
-					haveDepartureSIDSpec = haveDepartureSIDSpec || okSID
-					haveDepartureRunwaySpec = haveDepartureRunwaySpec || okRunway
-					if haveDepartureSIDSpec && haveDepartureRunwaySpec {
-						e.ErrorString("cannot use both runways and SIDs to specify the departure controller")
-					}
-				}
-			}
-
-			// Make sure all inbound flows are valid. Below we make sure all
-			// included arrivals have a controller.
-			for _, flow := range ctrl.InboundFlows {
-				if _, ok := s.InboundFlowDefaultRates[flow]; !ok {
-					e.ErrorString("inbound flow %q not found in scenario \"inbound_rates\"", flow)
-				} else if f, ok := sg.InboundFlows[flow]; !ok {
-					e.ErrorString("inbound flow %q not found in scenario group \"inbound_flows\"", flow)
-				} else {
-					// Is there a handoff to a human controller?
-					overflightHasHandoff := func(of av.Overflight) bool {
-						return slices.ContainsFunc(of.Waypoints, func(wp av.Waypoint) bool { return wp.HumanHandoff })
-					}
-					if len(f.Arrivals) == 0 && !slices.ContainsFunc(f.Overflights, overflightHasHandoff) {
-						// It's just overflights without handoffs
-						e.ErrorString("no inbound flows in %q have handoffs", flow)
-					}
-				}
-			}
-			e.Pop()
+	} else {
+		for s.DefaultSplit = range s.SplitConfigurations {
+			break
 		}
-		if primaryController == "" {
-			e.ErrorString("No controller in \"multi_controllers\" was specified as \"primary\"")
-		}
-
-		// Make sure each active departure config (airport and possibly
-		// SID) has exactly one controller handling its departures.
-		validateDep := func(active map[string]map[string]interface{}, check func(ctrl *av.MultiUserController, airport, spec string) bool) {
-			for airport, specs := range active {
-				for spec := range specs {
-					controller := ""
-					for callsign, ctrl := range controllers {
-						if check(ctrl, airport, spec) {
-							if controller != "" {
-								e.ErrorString("both %s and %s expect to handle %s/%s departures",
-									controller, callsign, airport, spec)
-							}
-							controller = callsign
-						}
-					}
-					if controller == "" {
-						e.ErrorString("no controller found that is covering %s/%s departures", airport, spec)
-					}
-				}
-			}
-		}
-		if haveDepartureSIDSpec {
-			validateDep(activeAirportSIDs, func(ctrl *av.MultiUserController, airport, spec string) bool {
-				return ctrl.IsDepartureController(airport, "", spec)
-			})
-		} else if haveDepartureRunwaySpec {
-			validateDep(activeAirportRunways, func(ctrl *av.MultiUserController, airport, spec string) bool {
-				return ctrl.IsDepartureController(airport, spec, "")
-			})
-		} else {
-			// Just airports
-			for airport := range activeDepartureAirports {
-				if sg.Airports[airport].DepartureController != "" {
-					// It's covered by a virtual controller
-					continue
-				}
-
-				controller := ""
-				for callsign, ctrl := range controllers {
-					if ctrl.IsDepartureController(airport, "", "") {
-						if controller != "" {
-							e.ErrorString("both %s and %s expect to handle %s departures",
-								controller, callsign, airport)
-						}
-						controller = callsign
-					}
-				}
-				if controller == "" {
-					e.ErrorString("no controller found that is covering %s departures", airport)
-				}
-			}
-		}
-
-		// Make sure all controllers are either the primary or have a path
-		// of backup controllers that eventually ends with the primary.
-		havePathToPrimary := make(map[string]interface{})
-		havePathToPrimary[primaryController] = nil
-		var followPathToPrimary func(callsign string, mc *av.MultiUserController, depth int) bool
-		followPathToPrimary = func(callsign string, mc *av.MultiUserController, depth int) bool {
-			if callsign == "" {
-				return false
-			}
-			if _, ok := havePathToPrimary[callsign]; ok {
-				return true
-			}
-			if depth == 0 || mc.BackupController == "" {
-				return false
-			}
-
-			bmc, ok := controllers[mc.BackupController]
-			if !ok {
-				e.ErrorString("Backup controller %q for %q is unknown",
-					mc.BackupController, callsign)
-				return false
-			}
-
-			if followPathToPrimary(mc.BackupController, bmc, depth-1) {
-				havePathToPrimary[callsign] = nil
-				return true
-			}
-			return false
-		}
-		for callsign, mc := range controllers {
-			if !followPathToPrimary(callsign, mc, 25) {
-				e.ErrorString("controller %q doesn't have a valid backup controller", callsign)
-			}
-		}
-		e.Pop()
 	}
 
 	for name := range util.SortedMap(s.InboundFlowDefaultRates) {
@@ -586,34 +821,6 @@ func (s *scenario) PostDeserialize(sg *scenarioGroup, e *util.ErrorLogger, manif
 
 			// For each multi-controller split, sure some controller covers the
 			// flow if there will be a handoff to a non-virtual controller.
-			hasHandoff := false
-			for _, ar := range flow.Arrivals {
-				if slices.ContainsFunc(ar.Waypoints, func(wp av.Waypoint) bool { return wp.HumanHandoff }) {
-					hasHandoff = true
-				}
-			}
-			for _, of := range flow.Overflights {
-				if slices.ContainsFunc(of.Waypoints, func(wp av.Waypoint) bool { return wp.HumanHandoff }) {
-					hasHandoff = true
-				}
-			}
-			if hasHandoff {
-				for split, controllers := range s.SplitConfigurations {
-					e.Push("\"multi_controllers\": split \"" + split + "\"")
-					count := 0
-					for _, mc := range controllers {
-						if slices.Contains(mc.InboundFlows, name) {
-							count++
-						}
-					}
-					if count == 0 {
-						e.ErrorString("no controller in \"multi_controllers\" has %q in their \"inbound_flows\"", name)
-					} else if count > 1 {
-						e.ErrorString("more than one controller in \"multi_controllers\" has this in their \"inbound_flows\"")
-					}
-					e.Pop()
-				}
-			}
 		}
 		e.Pop()
 	}
@@ -1100,7 +1307,20 @@ func (sg *scenarioGroup) rewriteControllers(e *util.ErrorLogger) {
 		originalPosition := position
 		ctrl.Position = originalPosition
 
-		canonicalID := ctrl.Id()
+		facilityType := av.FacilityType("")
+		if ctrl.Facility != "" {
+			if fac, ok := sg.Facilities[strings.ToUpper(ctrl.Facility)]; ok && fac != nil {
+				facilityType = fac.FacilityType
+			}
+		}
+
+		canonicalID := ""
+		if facilityType != av.FacilityTypeLocalSTARS {
+			canonicalID = ctrl.FacilityPositionID()
+		}
+		if canonicalID == "" {
+			canonicalID = ctrl.Id()
+		}
 		if canonicalID == "" {
 			canonicalID = ctrl.FacilityPositionID()
 		}
@@ -1287,6 +1507,12 @@ func (sg *scenarioGroup) rewriteControllers(e *util.ErrorLogger) {
 		delete(fa.ControllerConfigs, position)
 		rewrite(&position)
 		fa.ControllerConfigs[position] = config
+	}
+
+	for i := range fa.CoordinationLists {
+		for j := range fa.CoordinationLists[i].Positions {
+			rewrite(&fa.CoordinationLists[i].Positions[j])
+		}
 	}
 
 	for _, flow := range sg.InboundFlows {
@@ -1518,27 +1744,6 @@ func PostDeserializeFacilityAdaptation(s *sim.FacilityAdaptation, e *util.ErrorL
 		}
 	}
 
-	// Hold for release validation
-	for airport, ap := range sg.Airports {
-		var matches []string
-		for _, list := range s.CoordinationLists {
-			if slices.Contains(list.Airports, airport) {
-				matches = append(matches, list.Name)
-			}
-		}
-
-		if ap.HoldForRelease {
-			// Make sure it's in either zero or one of the coordination lists.
-			if len(matches) > 1 {
-				e.ErrorString("Airport %q is in multiple entries in \"coordination_lists\": %s.", airport, strings.Join(matches, ", "))
-			}
-		} else if len(matches) != 0 {
-			// And it shouldn't be any if it's not hold for release
-			e.ErrorString("Airport %q isn't \"hold_for_release\" but is in \"coordination_lists\": %s.", airport,
-				strings.Join(matches, ", "))
-		}
-	}
-
 	if s.MonitoredBeaconCodeBlocksString == nil {
 		s.MonitoredBeaconCodeBlocks = []av.Squawk{0o12} // 12xx block by default
 	} else {
@@ -1593,16 +1798,16 @@ func PostDeserializeFacilityAdaptation(s *sim.FacilityAdaptation, e *util.ErrorL
 		if list.Id == "" {
 			e.ErrorString("\"id\" must be specified for coordination list.")
 		}
-		if len(list.Airports) == 0 {
-			e.ErrorString("At least one airport must be specified in \"airports\" for coordination list.")
+		if len(list.Positions) == 0 {
+			e.ErrorString("At least one controller must be specified in \"positions\" for coordination list.")
 		}
 
 		seenIds[list.Id] = append(seenIds[list.Id], list.Name)
 
-		// Make sure all airport names in coordination lists are part of the scenario.
-		for _, ap := range list.Airports {
-			if _, ok := sg.Airports[ap]; !ok {
-				e.ErrorString("Airport %q not defined in scenario group.", ap)
+		// Make sure all positions in coordination lists are part of the scenario.
+		for _, pos := range list.Positions {
+			if _, ok := sg.ControlPositions[pos]; !ok {
+				e.ErrorString("Control position %q not defined in scenario group.", pos)
 			}
 		}
 
@@ -1757,13 +1962,18 @@ func initializeSimConfigurations(sg *scenarioGroup, simConfigurations map[string
 		lc := sim.MakeLaunchConfig(scenario.DepartureRunways, *scenario.VFRRateScale, vfrAirports,
 			scenario.InboundFlowDefaultRates, haveVFRReportingRegions)
 		sc := &SimScenarioConfiguration{
-			SplitConfigurations: scenario.SplitConfigurations,
-			LaunchConfig:        lc,
-			DepartureRunways:    scenario.DepartureRunways,
-			ArrivalRunways:      scenario.ArrivalRunways,
-			PrimaryAirport:      sg.PrimaryAirport,
-			MagneticVariation:   sg.MagneticVariation,
-			WindSpecifier:       scenario.WindSpecifier,
+			SplitConfigurations:   scenario.SplitConfigurations,
+			SoloController:        scenario.SoloController,
+			SoloControllerConfig:  scenario.SoloControllerConfig,
+			MultiControllerConfig: scenario.MultiControllerConfig,
+			VirtualPositionConfig: scenario.VirtualPositionConfig,
+			FixPairAssignments:    scenario.FixPairAssignments,
+			LaunchConfig:          lc,
+			DepartureRunways:      scenario.DepartureRunways,
+			ArrivalRunways:        scenario.ArrivalRunways,
+			PrimaryAirport:        sg.PrimaryAirport,
+			MagneticVariation:     sg.MagneticVariation,
+			WindSpecifier:         scenario.WindSpecifier,
 		}
 
 		// All scenarios now have SplitConfigurations (auto-populated if
@@ -2127,6 +2337,17 @@ func CreateNewSimConfiguration(config *Configuration, scenarioGroup *scenarioGro
 		return nil, fmt.Errorf("scenario configuration %s not found", scenarioName)
 	}
 
+	signOnPositions := make(map[string]*av.Controller)
+	for id, ctrl := range scenarioGroup.ControlPositions {
+		if ctrl == nil {
+			continue
+		}
+		if _, virtual := scenario.VirtualPositionConfig[id]; virtual {
+			continue
+		}
+		signOnPositions[id] = ctrl
+	}
+
 	newSimConfig := &sim.NewSimConfiguration{
 		TRACON:             scenarioGroup.TRACON,
 		Description:        scenarioName,
@@ -2139,7 +2360,7 @@ func CreateNewSimConfiguration(config *Configuration, scenarioGroup *scenarioGro
 		VFRReportingPoints: scenarioGroup.VFRReportingPoints,
 		ControlPositions:   scenarioGroup.ControlPositions,
 		PrimaryController:  scenario.SoloController,
-		SignOnPositions:    scenarioGroup.ControlPositions,
+		SignOnPositions:    signOnPositions,
 		InboundFlows:       scenarioGroup.InboundFlows,
 		FacilityAdaptation: deep.MustCopy(scenarioGroup.FacilityAdaptation),
 		ReportingPoints:    scenarioGroup.ReportingPoints,
@@ -2153,6 +2374,7 @@ func CreateNewSimConfiguration(config *Configuration, scenarioGroup *scenarioGro
 		Airspace:           scenarioGroup.Airspace,
 		ControllerAirspace: scenario.Airspace,
 		VirtualControllers: scenario.VirtualControllers,
+		LocalControllers:   scenario.LocalControllers,
 	}
 
 	return newSimConfig, nil
