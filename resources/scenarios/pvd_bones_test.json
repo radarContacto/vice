@@ -128,7 +128,7 @@
       "solo_configuration": {
         "configuration_id": "FG2",
         "solo_position": {
-          "1D": { "consolidated_tcps": ["1A"] }
+          "1D": { "consolidated_positions": ["1A"] }
         }
       },
       "multi_configuration": {

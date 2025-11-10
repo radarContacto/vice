@@ -56,7 +56,7 @@ type scenarioGroup struct {
 }
 
 type scenarioSoloPosition struct {
-	ConsolidatedTCPs []string `json:"consolidated_tcps"`
+	ConsolidatedPositions []string `json:"consolidated_positions"`
 }
 
 type scenarioSoloConfiguration struct {
@@ -252,16 +252,16 @@ func (s *scenario) initializeControllerConfigurations(sg *scenarioGroup, e *util
 			continue
 		}
 
-		consolidated := make([]string, 0, len(spec.ConsolidatedTCPs))
+		consolidated := make([]string, 0, len(spec.ConsolidatedPositions))
 		seen := make(map[string]struct{})
-		for _, c := range spec.ConsolidatedTCPs {
+		for _, c := range spec.ConsolidatedPositions {
 			c = strings.TrimSpace(c)
 			if c == "" {
 				continue
 			}
 			resolved, rok := sg.canonicalControllerIdentifier(c)
 			if !rok {
-				e.ErrorString("consolidated controller %q for solo controller %q is unknown", c, original)
+				e.ErrorString("consolidated position %q for solo controller %q is unknown", c, original)
 				continue
 			}
 			if _, dup := seen[resolved]; dup {
@@ -319,7 +319,7 @@ func (s *scenario) initializeControllerConfigurations(sg *scenarioGroup, e *util
 				}
 				resolved, rok := sg.canonicalControllerIdentifier(c)
 				if !rok {
-					e.ErrorString("consolidated controller %q for controller %q is unknown", c, original)
+					e.ErrorString("consolidated position %q for controller %q is unknown", c, original)
 					continue
 				}
 				if _, dup := seen[resolved]; dup {
@@ -394,7 +394,7 @@ func (s *scenario) initializeControllerConfigurations(sg *scenarioGroup, e *util
 				}
 				resolved, rok := sg.canonicalControllerIdentifier(c)
 				if !rok {
-					e.ErrorString("virtual consolidated controller %q for %q is unknown", c, original)
+					e.ErrorString("virtual consolidated position %q for %q is unknown", c, original)
 					continue
 				}
 				if _, dup := seen[resolved]; dup {
@@ -520,7 +520,7 @@ func (s *scenario) PostDeserialize(sg *scenarioGroup, e *util.ErrorLogger, manif
 	s.initializeFixPairAssignments(sg, e)
 
 	for name, controllers := range s.SplitConfigurations {
-		e.Push("\"multi_controllers\": split \"" + name + "\"")
+		e.Push(fmt.Sprintf("controller configuration %q", name))
 		for callsign := range controllers {
 			if _, ok := sg.ControlPositions[callsign]; !ok {
 				e.ErrorString("controller %q not defined in the scenario group's \"control_positions\"", callsign)
@@ -721,174 +721,14 @@ func (s *scenario) PostDeserialize(sg *scenarioGroup, e *util.ErrorLogger, manif
 		}
 	}
 
-	// Various multi_controllers validations
-	if len(s.SplitConfigurations) > 0 {
-		if len(s.SplitConfigurations) == 1 && s.DefaultSplit == "" {
-			// Set the default split to be the single specified controller
-			// assignment.
-			for s.DefaultSplit = range s.SplitConfigurations {
-			}
-		} else if s.DefaultSplit == "" {
-			e.ErrorString("multiple splits specified in \"multi_controllers\" but no \"default_split\" specified")
-		} else if _, ok := s.SplitConfigurations[s.DefaultSplit]; !ok {
-			e.ErrorString("did not find \"default_split\" %q in \"multi_controllers\" splits", s.DefaultSplit)
+	if s.DefaultSplit != "" {
+		if _, ok := s.SplitConfigurations[s.DefaultSplit]; !ok {
+			e.ErrorString("default controller configuration %q is not defined", s.DefaultSplit)
 		}
-	}
-	for name, controllers := range s.SplitConfigurations {
-		primaryController := ""
-		e.Push("\"multi_controllers\": split \"" + name + "\"")
-
-		haveDepartureSIDSpec, haveDepartureRunwaySpec := false, false
-
-		for callsign, ctrl := range controllers {
-			e.Push(callsign)
-			if ctrl.Primary {
-				if primaryController != "" {
-					e.ErrorString("multiple controllers specified as \"primary\": %s %s",
-						primaryController, callsign)
-				} else {
-					primaryController = callsign
-				}
-			}
-
-			if _, ok := sg.ControlPositions[callsign]; !ok {
-				e.ErrorString("controller %q not defined in the scenario group's \"control_positions\"", callsign)
-			}
-
-			// Make sure any airports claimed for departures are valid
-			for _, airportSID := range ctrl.Departures {
-				ap, sidRunway, haveSIDRunway := strings.Cut(airportSID, "/")
-				if sids, ok := activeAirportSIDs[ap]; !ok {
-					e.ErrorString("airport %q is not departing aircraft in this scenario", ap)
-				} else if haveSIDRunway {
-					// If there's something after a slash, make sure it's
-					// either a valid SID or runway.
-					_, okSID := sids[sidRunway]
-					_, okRunway := activeAirportRunways[ap][sidRunway]
-					if !okSID && !okRunway {
-						e.ErrorString("%q at airport %q is neither an active runway or SID in this scenario", sidRunway, ap)
-					}
-
-					haveDepartureSIDSpec = haveDepartureSIDSpec || okSID
-					haveDepartureRunwaySpec = haveDepartureRunwaySpec || okRunway
-					if haveDepartureSIDSpec && haveDepartureRunwaySpec {
-						e.ErrorString("cannot use both runways and SIDs to specify the departure controller")
-					}
-				}
-			}
-
-			// Make sure all inbound flows are valid. Below we make sure all
-			// included arrivals have a controller.
-			for _, flow := range ctrl.InboundFlows {
-				if _, ok := s.InboundFlowDefaultRates[flow]; !ok {
-					e.ErrorString("inbound flow %q not found in scenario \"inbound_rates\"", flow)
-				} else if f, ok := sg.InboundFlows[flow]; !ok {
-					e.ErrorString("inbound flow %q not found in scenario group \"inbound_flows\"", flow)
-				} else {
-					// Is there a handoff to a human controller?
-					overflightHasHandoff := func(of av.Overflight) bool {
-						return slices.ContainsFunc(of.Waypoints, func(wp av.Waypoint) bool { return wp.HumanHandoff })
-					}
-					if len(f.Arrivals) == 0 && !slices.ContainsFunc(f.Overflights, overflightHasHandoff) {
-						// It's just overflights without handoffs
-						e.ErrorString("no inbound flows in %q have handoffs", flow)
-					}
-				}
-			}
-			e.Pop()
+	} else {
+		for s.DefaultSplit = range s.SplitConfigurations {
+			break
 		}
-		if primaryController == "" {
-			e.ErrorString("No controller in \"multi_controllers\" was specified as \"primary\"")
-		}
-
-		// Make sure each active departure config (airport and possibly
-		// SID) has exactly one controller handling its departures.
-		validateDep := func(active map[string]map[string]interface{}, check func(ctrl *av.MultiUserController, airport, spec string) bool) {
-			for airport, specs := range active {
-				for spec := range specs {
-					controller := ""
-					for callsign, ctrl := range controllers {
-						if check(ctrl, airport, spec) {
-							if controller != "" {
-								e.ErrorString("both %s and %s expect to handle %s/%s departures",
-									controller, callsign, airport, spec)
-							}
-							controller = callsign
-						}
-					}
-					if controller == "" {
-						e.ErrorString("no controller found that is covering %s/%s departures", airport, spec)
-					}
-				}
-			}
-		}
-		if haveDepartureSIDSpec {
-			validateDep(activeAirportSIDs, func(ctrl *av.MultiUserController, airport, spec string) bool {
-				return ctrl.IsDepartureController(airport, "", spec)
-			})
-		} else if haveDepartureRunwaySpec {
-			validateDep(activeAirportRunways, func(ctrl *av.MultiUserController, airport, spec string) bool {
-				return ctrl.IsDepartureController(airport, spec, "")
-			})
-		} else {
-			// Just airports
-			for airport := range activeDepartureAirports {
-				if sg.Airports[airport].DepartureController != "" {
-					// It's covered by a virtual controller
-					continue
-				}
-
-				controller := ""
-				for callsign, ctrl := range controllers {
-					if ctrl.IsDepartureController(airport, "", "") {
-						if controller != "" {
-							e.ErrorString("both %s and %s expect to handle %s departures",
-								controller, callsign, airport)
-						}
-						controller = callsign
-					}
-				}
-				if controller == "" {
-					e.ErrorString("no controller found that is covering %s departures", airport)
-				}
-			}
-		}
-
-		// Make sure all controllers are either the primary or have a path
-		// of backup controllers that eventually ends with the primary.
-		havePathToPrimary := make(map[string]interface{})
-		havePathToPrimary[primaryController] = nil
-		var followPathToPrimary func(callsign string, mc *av.MultiUserController, depth int) bool
-		followPathToPrimary = func(callsign string, mc *av.MultiUserController, depth int) bool {
-			if callsign == "" {
-				return false
-			}
-			if _, ok := havePathToPrimary[callsign]; ok {
-				return true
-			}
-			if depth == 0 || mc.BackupController == "" {
-				return false
-			}
-
-			bmc, ok := controllers[mc.BackupController]
-			if !ok {
-				e.ErrorString("Backup controller %q for %q is unknown",
-					mc.BackupController, callsign)
-				return false
-			}
-
-			if followPathToPrimary(mc.BackupController, bmc, depth-1) {
-				havePathToPrimary[callsign] = nil
-				return true
-			}
-			return false
-		}
-		for callsign, mc := range controllers {
-			if !followPathToPrimary(callsign, mc, 25) {
-				e.ErrorString("controller %q doesn't have a valid backup controller", callsign)
-			}
-		}
-		e.Pop()
 	}
 
 	for name := range util.SortedMap(s.InboundFlowDefaultRates) {
@@ -951,34 +791,6 @@ func (s *scenario) PostDeserialize(sg *scenarioGroup, e *util.ErrorLogger, manif
 
 			// For each multi-controller split, sure some controller covers the
 			// flow if there will be a handoff to a non-virtual controller.
-			hasHandoff := false
-			for _, ar := range flow.Arrivals {
-				if slices.ContainsFunc(ar.Waypoints, func(wp av.Waypoint) bool { return wp.HumanHandoff }) {
-					hasHandoff = true
-				}
-			}
-			for _, of := range flow.Overflights {
-				if slices.ContainsFunc(of.Waypoints, func(wp av.Waypoint) bool { return wp.HumanHandoff }) {
-					hasHandoff = true
-				}
-			}
-			if hasHandoff {
-				for split, controllers := range s.SplitConfigurations {
-					e.Push("\"multi_controllers\": split \"" + split + "\"")
-					count := 0
-					for _, mc := range controllers {
-						if slices.Contains(mc.InboundFlows, name) {
-							count++
-						}
-					}
-					if count == 0 {
-						e.ErrorString("no controller in \"multi_controllers\" has %q in their \"inbound_flows\"", name)
-					} else if count > 1 {
-						e.ErrorString("more than one controller in \"multi_controllers\" has this in their \"inbound_flows\"")
-					}
-					e.Pop()
-				}
-			}
 		}
 		e.Pop()
 	}
