@@ -381,6 +381,7 @@ type FlightPlan struct {
 	ArrivalAirport   string
 	AlternateAirport string
 	Exit             string
+	ExitFix          string
 	Route            string
 	Remarks          string
 }

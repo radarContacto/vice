@@ -1303,12 +1303,15 @@ func (s *Sim) createIFRDepartureNoLock(departureAirport, runway, category string
 		return nil, err
 	}
 
-	shortExit, _, _ := strings.Cut(dep.Exit, ".") // chop any excess
 	entryFix := strings.ToUpper(departureAirport)
 	if len(entryFix) == 4 && entryFix[0] == 'K' {
 		entryFix = entryFix[1:]
 	}
-	exitFix := strings.ToUpper(shortExit)
+	exitFix := strings.ToUpper(strings.TrimSpace(dep.ExitFix))
+	if exitFix == "" {
+		shortExit, _, _ := strings.Cut(dep.Exit, ".")
+		exitFix = strings.ToUpper(shortExit)
+	}
 	fixPairOwner := s.State.ResolveFixPairOwner("P", entryFix, exitFix)
 	if fixPairOwner == "" {
 		fixPairOwner = s.State.PrimaryController
