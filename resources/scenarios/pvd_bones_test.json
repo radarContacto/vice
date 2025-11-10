@@ -200,6 +200,181 @@
       "JUMPR": { "short_name": "7TN" },
       "PEAKE": { "short_name": "DNE" }
     },
+    "tcp_configuration": {
+      "tcps": {
+        "1A": {
+          "tcp_name": "ARRIVAL",
+          "facility_id": "PVD",
+          "terminal_sector": "A",
+          "excluded_exit_fixes": [
+            "PVD"
+          ]
+        },
+        "1D": {
+          "tcp_name": "DEPARTURE",
+          "facility_id": "PVD",
+          "terminal_sector": "A",
+          "excluded_exit_fixes": []
+        },
+        "1T": {
+          "tcp_name": "LOCAL",
+          "facility_id": "PVD",
+          "terminal_sector": "D",
+          "excluded_exit_fixes": []
+        }
+      },
+      "fix_pair_configuration": {
+        "PVD": {
+          "sector_configurations": [
+            {
+              "configuration_id": "FG2",
+              "configuration_name": "RWY 23/EWB/A",
+              "default_configuration": true
+            },
+            {
+              "configuration_id": "FG3",
+              "configuration_name": "RWY 05/34/EWB/A"
+            }
+          ],
+          "fix_pairs": [
+            {
+              "terminal_sector": "A",
+              "flight_type": "arrival",
+              "entry_fix": "ORW",
+              "exit_fix": "PVD"
+            },
+            {
+              "terminal_sector": "A",
+              "flight_type": "arrival",
+              "entry_fix": "ORW",
+              "exit_fix": "OQU"
+            },
+            {
+              "terminal_sector": "A",
+              "flight_type": "arrival",
+              "entry_fix": "7WH",
+              "exit_fix": "PVD"
+            },
+            {
+              "terminal_sector": "A",
+              "flight_type": "arrival",
+              "entry_fix": "7WH",
+              "exit_fix": "OQU"
+            },
+            {
+              "terminal_sector": "A",
+              "flight_type": "departure",
+              "entry_fix": "PVD",
+              "exit_fix": "PUT"
+            },
+            {
+              "terminal_sector": "A",
+              "flight_type": "departure",
+              "entry_fix": "PVD",
+              "exit_fix": "7TN"
+            },
+            {
+              "terminal_sector": "A",
+              "flight_type": "departure",
+              "entry_fix": "OQU",
+              "exit_fix": "PUT"
+            },
+            {
+              "terminal_sector": "A",
+              "flight_type": "departure",
+              "entry_fix": "OQU",
+              "exit_fix": "7TN"
+            },
+            {
+              "terminal_sector": "A",
+              "flight_type": "overflight",
+              "entry_fix": "ORW",
+              "exit_fix": "7WH"
+            }
+          ],
+          "fix_pair_tcp_assignments": [
+            {
+              "configuration": [
+                "FG2",
+                "FG3"
+              ],
+              "flight_type": "arrival",
+              "entry_fix": "ORW",
+              "exit_fix": "PVD",
+              "tcp": "1D"
+            },
+            {
+              "configuration": [
+                "FG2",
+                "FG3"
+              ],
+              "flight_type": "arrival",
+              "entry_fix": "ORW",
+              "exit_fix": "OQU",
+              "tcp": "1D"
+            },
+            {
+              "configuration": [
+                "FG2",
+                "FG3"
+              ],
+              "flight_type": "arrival",
+              "entry_fix": "7WH",
+              "exit_fix": "PVD",
+              "tcp": "1D"
+            },
+            {
+              "configuration": [
+                "FG2",
+                "FG3"
+              ],
+              "flight_type": "arrival",
+              "entry_fix": "7WH",
+              "exit_fix": "OQU",
+              "tcp": "1D"
+            },
+            {
+              "configuration": [
+                "FG2",
+                "FG3"
+              ],
+              "flight_type": "departure",
+              "entry_fix": "PVD",
+              "exit_fix": "PUT",
+              "tcp": "1D"
+            },
+            {
+              "configuration": [
+                "FG2"
+              ],
+              "flight_type": "departure",
+              "entry_fix": "OQU",
+              "exit_fix": "PUT",
+              "tcp": "1D"
+            },
+            {
+              "configuration": [
+                "FG3"
+              ],
+              "flight_type": "departure",
+              "entry_fix": "OQU",
+              "exit_fix": "PUT",
+              "tcp": "1A"
+            },
+            {
+              "configuration": [
+                "FG2",
+                "FG3"
+              ],
+              "flight_type": "overflight",
+              "entry_fix": "ORW",
+              "exit_fix": "7WH",
+              "tcp": "1D"
+            }
+          ]
+        }
+      }
+    },
     "stars_maps": [
       "RVMPVD005S",
       "RVMPVD113S",
