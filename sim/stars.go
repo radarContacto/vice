@@ -326,6 +326,7 @@ type FacilityAdaptation struct {
 	Range               float32                           `json:"range"`
 	Scratchpads         map[string]string                 `json:"scratchpads" scope:"stars"`
 	SignificantPoints   map[string]SignificantPoint       `json:"significant_points" scope:"stars"`
+	TCPConfiguration    STARSFacilityTCPConfiguration     `json:"tcp_configuration" scope:"stars"`
 	Altimeters          []string                          `json:"altimeters"`
 
 	// Airpsace filters
@@ -435,6 +436,68 @@ type CoordinationList struct {
 	Airports      []string `json:"airports"`
 	YellowEntries bool     `json:"yellow_entries"`
 	Format        string   `json:"format"`
+}
+
+type STARSFacilityTCPConfiguration struct {
+	TCPs                 map[string]*STARSTCPDefinition                `json:"tcps"`
+	FixPairConfiguration map[string]*STARSFacilityFixPairConfiguration `json:"fix_pair_configuration"`
+}
+
+type STARSTCPDefinition struct {
+	TCPName           string   `json:"tcp_name"`
+	FacilityID        string   `json:"facility_id"`
+	TerminalSector    string   `json:"terminal_sector"`
+	ExcludedExitFixes []string `json:"excluded_exit_fixes"`
+}
+
+type STARSFacilityFixPairConfiguration struct {
+	SectorConfigurations  []STARSFacilitySectorConfiguration `json:"sector_configurations"`
+	FixPairs              []STARSFacilityFixPair             `json:"fix_pairs"`
+	FixPairTCPAssignments []STARSFixPairTCPAssignment        `json:"fix_pair_tcp_assignments"`
+}
+
+type STARSFacilitySectorConfiguration struct {
+	ConfigurationID      string `json:"configuration_id"`
+	ConfigurationName    string `json:"configuration_name"`
+	DefaultConfiguration bool   `json:"default_configuration"`
+}
+
+type STARSFacilityFixPair struct {
+	TerminalSector string `json:"terminal_sector"`
+	FlightType     string `json:"flight_type"`
+	EntryFix       string `json:"entry_fix"`
+	ExitFix        string `json:"exit_fix"`
+}
+
+type STARSFixPairTCPAssignment struct {
+	Configuration []string `json:"configuration"`
+	FlightType    string   `json:"flight_type"`
+	EntryFix      string   `json:"entry_fix"`
+	ExitFix       string   `json:"exit_fix"`
+	TCP           string   `json:"tcp"`
+}
+
+func normalizeFlightType(value string) (string, bool) {
+	v := strings.ToUpper(strings.TrimSpace(value))
+	switch v {
+	case "A", "ARR", "ARRIVAL", "ARRIVALS":
+		return "A", true
+	case "P", "D", "DEP", "DEPART", "DEPARTURE", "DEPARTURES":
+		return "P", true
+	case "E", "O", "OVR", "OVERFLIGHT", "OVERFLIGHTS":
+		return "E", true
+	default:
+		return "", false
+	}
+}
+
+func containsFold(values []string, target string) bool {
+	for _, candidate := range values {
+		if strings.EqualFold(candidate, target) {
+			return true
+		}
+	}
+	return false
 }
 
 // Validates a format string for a STARS system list. Extra specifiers that are specific to
@@ -894,7 +957,8 @@ const (
 	LocalNonEnroute
 )
 
-func (fa *FacilityAdaptation) PostDeserialize(loc av.Locator, controlledAirports []string, allAirports []string, e *util.ErrorLogger) {
+func (fa *FacilityAdaptation) PostDeserialize(loc av.Locator, facilities map[string]*av.Facility,
+	controlledAirports []string, allAirports []string, e *util.ErrorLogger) {
 	defer e.CheckDepth(e.CurrentDepth())
 
 	if ctr := fa.CenterString; ctr == "" {
@@ -1080,6 +1144,8 @@ func (fa *FacilityAdaptation) PostDeserialize(loc av.Locator, controlledAirports
 		fa.Filters.SecondaryDrop[i].InvertTest = true
 	}
 
+	fa.validateTCPConfiguration(facilities, e)
+
 	// Quick FP ACID
 	e.Push("\"flight_plan\"")
 	fa.FlightPlan.QuickACID = strings.ToUpper(fa.FlightPlan.QuickACID)
@@ -1167,6 +1233,211 @@ func (fa *FacilityAdaptation) PostDeserialize(loc av.Locator, controlledAirports
 		}
 	}
 	e.Pop()
+}
+
+func (fa *FacilityAdaptation) validateTCPConfiguration(facilities map[string]*av.Facility, e *util.ErrorLogger) {
+	cfg := fa.TCPConfiguration
+	if len(cfg.TCPs) == 0 && len(cfg.FixPairConfiguration) == 0 {
+		return
+	}
+
+	e.Push("\"tcp_configuration\"")
+	defer e.Pop()
+
+	knownTCPs := make(map[string]*STARSTCPDefinition)
+
+	for tcpID, tcp := range cfg.TCPs {
+		e.Push("TCP " + tcpID)
+
+		if tcp == nil {
+			e.ErrorString("definition is missing")
+			e.Pop()
+			continue
+		}
+
+		tcp.TCPName = strings.TrimSpace(tcp.TCPName)
+		if tcp.TCPName == "" {
+			e.ErrorString("\"tcp_name\" must be specified")
+		}
+
+		tcp.FacilityID = strings.TrimSpace(tcp.FacilityID)
+		if tcp.FacilityID == "" {
+			e.ErrorString("\"facility_id\" must be specified")
+		}
+
+		tcp.TerminalSector = strings.ToUpper(strings.TrimSpace(tcp.TerminalSector))
+		if tcp.TerminalSector == "" {
+			e.ErrorString("\"terminal_sector\" must be specified")
+		}
+
+		if fac := facilities[tcp.FacilityID]; fac == nil {
+			if tcp.FacilityID != "" {
+				e.ErrorString("facility %q referenced by TCP %q is not defined in \"facilities\"", tcp.FacilityID, tcpID)
+			}
+		} else if len(fac.TerminalSectors) > 0 && tcp.TerminalSector != "" && !containsFold(fac.TerminalSectors, tcp.TerminalSector) {
+			e.ErrorString("terminal sector %q is not listed for facility %q", tcp.TerminalSector, tcp.FacilityID)
+		}
+
+		for i := range tcp.ExcludedExitFixes {
+			fix := strings.TrimSpace(tcp.ExcludedExitFixes[i])
+			if fix == "" {
+				e.ErrorString("\"excluded_exit_fixes\" cannot contain empty values")
+			}
+			tcp.ExcludedExitFixes[i] = strings.ToUpper(fix)
+		}
+
+		knownTCPs[tcpID] = tcp
+		e.Pop()
+	}
+
+	type fixPairKey struct {
+		FlightType string
+		EntryFix   string
+		ExitFix    string
+	}
+
+	for facilityID, configuration := range cfg.FixPairConfiguration {
+		e.Push("Facility " + facilityID)
+
+		facility := facilities[facilityID]
+		if facility == nil {
+			e.ErrorString("facility %q not defined in scenario \"facilities\"", facilityID)
+		} else if facility.FacilityType != av.FacilityTypeLocalSTARS {
+			e.ErrorString("facility %q must have \"facility_type\" \"L\" to define fix pair configuration", facilityID)
+		}
+
+		if configuration == nil {
+			e.ErrorString("configuration is missing")
+			e.Pop()
+			continue
+		}
+
+		configIDs := make(map[string]struct{})
+		defaultSeen := false
+		for i := range configuration.SectorConfigurations {
+			sc := &configuration.SectorConfigurations[i]
+			e.Push(fmt.Sprintf("sector_configurations[%d]", i))
+
+			sc.ConfigurationID = strings.TrimSpace(sc.ConfigurationID)
+			sc.ConfigurationName = strings.TrimSpace(sc.ConfigurationName)
+
+			if sc.ConfigurationID == "" {
+				e.ErrorString("\"configuration_id\" must be specified")
+			} else if _, exists := configIDs[sc.ConfigurationID]; exists {
+				e.ErrorString("duplicate \"configuration_id\" %q", sc.ConfigurationID)
+			} else {
+				configIDs[sc.ConfigurationID] = struct{}{}
+			}
+
+			if sc.ConfigurationName == "" {
+				e.ErrorString("\"configuration_name\" must be specified")
+			}
+
+			if sc.DefaultConfiguration {
+				if defaultSeen {
+					e.ErrorString("only one \"default_configuration\" may be true per facility")
+				}
+				defaultSeen = true
+			}
+
+			e.Pop()
+		}
+
+		fixPairs := make(map[fixPairKey]struct{})
+
+		for i := range configuration.FixPairs {
+			fp := &configuration.FixPairs[i]
+			e.Push(fmt.Sprintf("fix_pairs[%d]", i))
+
+			fp.TerminalSector = strings.ToUpper(strings.TrimSpace(fp.TerminalSector))
+			if fp.TerminalSector == "" {
+				e.ErrorString("\"terminal_sector\" must be specified")
+			} else if facility != nil && len(facility.TerminalSectors) > 0 && !containsFold(facility.TerminalSectors, fp.TerminalSector) {
+				e.ErrorString("terminal sector %q is not listed for facility %q", fp.TerminalSector, facilityID)
+			}
+
+			fp.EntryFix = strings.ToUpper(strings.TrimSpace(fp.EntryFix))
+			if fp.EntryFix == "" {
+				e.ErrorString("\"entry_fix\" must be specified")
+			}
+
+			fp.ExitFix = strings.ToUpper(strings.TrimSpace(fp.ExitFix))
+			if fp.ExitFix == "" {
+				e.ErrorString("\"exit_fix\" must be specified")
+			}
+
+			flightType, ok := normalizeFlightType(fp.FlightType)
+			if !ok {
+				e.ErrorString("unknown \"flight_type\" %q", fp.FlightType)
+			}
+			fp.FlightType = flightType
+
+			if flightType != "" && fp.EntryFix != "" && fp.ExitFix != "" {
+				key := fixPairKey{FlightType: flightType, EntryFix: fp.EntryFix, ExitFix: fp.ExitFix}
+				if _, exists := fixPairs[key]; exists {
+					e.ErrorString("duplicate fix pair for %s with %s/%s", flightType, fp.EntryFix, fp.ExitFix)
+				} else {
+					fixPairs[key] = struct{}{}
+				}
+			}
+
+			e.Pop()
+		}
+
+		for i := range configuration.FixPairTCPAssignments {
+			assignment := &configuration.FixPairTCPAssignments[i]
+			e.Push(fmt.Sprintf("fix_pair_tcp_assignments[%d]", i))
+
+			if len(assignment.Configuration) == 0 {
+				e.ErrorString("\"configuration\" must specify at least one entry")
+			}
+
+			for j := range assignment.Configuration {
+				assignment.Configuration[j] = strings.TrimSpace(assignment.Configuration[j])
+				if assignment.Configuration[j] == "" {
+					e.ErrorString("\"configuration\" entries must not be empty")
+				} else if _, exists := configIDs[assignment.Configuration[j]]; !exists {
+					e.ErrorString("configuration %q is not defined for facility %q", assignment.Configuration[j], facilityID)
+				}
+			}
+
+			assignment.EntryFix = strings.ToUpper(strings.TrimSpace(assignment.EntryFix))
+			if assignment.EntryFix == "" {
+				e.ErrorString("\"entry_fix\" must be specified")
+			}
+
+			assignment.ExitFix = strings.ToUpper(strings.TrimSpace(assignment.ExitFix))
+			if assignment.ExitFix == "" {
+				e.ErrorString("\"exit_fix\" must be specified")
+			}
+
+			flightType, ok := normalizeFlightType(assignment.FlightType)
+			if !ok {
+				e.ErrorString("unknown \"flight_type\" %q", assignment.FlightType)
+			}
+			assignment.FlightType = flightType
+
+			assignment.TCP = strings.TrimSpace(assignment.TCP)
+			if assignment.TCP == "" {
+				e.ErrorString("\"tcp\" must be specified")
+			} else if tcp, ok := knownTCPs[assignment.TCP]; !ok {
+				e.ErrorString("tcp %q is not defined in \"tcps\"", assignment.TCP)
+			} else if tcp.FacilityID != "" && !strings.EqualFold(tcp.FacilityID, facilityID) {
+				e.ErrorString("tcp %q belongs to facility %q, not %q", assignment.TCP, tcp.FacilityID, facilityID)
+			}
+
+			if flightType != "" && assignment.EntryFix != "" && assignment.ExitFix != "" {
+				key := fixPairKey{FlightType: flightType, EntryFix: assignment.EntryFix, ExitFix: assignment.ExitFix}
+				if _, exists := fixPairs[key]; !exists {
+					e.ErrorString("no fix pair defined for %s with %s/%s", flightType, assignment.EntryFix, assignment.ExitFix)
+				}
+			}
+
+			e.Pop()
+		}
+
+		e.Pop()
+	}
 }
 
 func (fa FacilityAdaptation) CheckScratchpad(sp string) bool {
