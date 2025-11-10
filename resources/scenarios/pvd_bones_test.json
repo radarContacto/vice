@@ -128,17 +128,18 @@
       "solo_configuration": {
         "configuration_id": "FG2",
         "solo_position": {
-          "PVD_1D": { "consolidated_tcps": ["PVD_1A"] }
+          "1D": { "consolidated_tcps": ["1A"] }
         }
       },
       "multi_configuration": {
         "configuration_id": "FG2",
         "positions": {
-          "PVD_1D": { "consolidated_positions": [] },
-          "PVD_1A": { "consolidated_positions": [] }
+          "1D": { "consolidated_positions": [] },
+          "1A": { "consolidated_positions": [] }
         }
       },
       "virtual_positions": {
+        "1T": { "consolidated_positions": [] },
         "ZBW_42": { "consolidated_positions": [] }
       },
       "default_maps": ["RVMPVD011S"],

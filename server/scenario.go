@@ -127,6 +127,42 @@ func sanitizePositionList(values []string) []string {
 	return result
 }
 
+func (sg *scenarioGroup) defaultLocalFacility() string {
+	for id, facility := range sg.Facilities {
+		if facility == nil {
+			continue
+		}
+		if facility.FacilityType == av.FacilityTypeLocalSTARS {
+			return id
+		}
+	}
+	return ""
+}
+
+func (sg *scenarioGroup) canonicalControllerIdentifier(identifier string) (string, bool) {
+	identifier = strings.TrimSpace(identifier)
+	if identifier == "" {
+		return "", false
+	}
+
+	facilityID := ""
+	if fac, routing, ok := strings.Cut(identifier, "_"); ok && routing != "" {
+		facilityID = fac
+	} else {
+		facilityID = sg.defaultLocalFacility()
+	}
+
+	facilityID = strings.ToUpper(strings.TrimSpace(facilityID))
+
+	if facilityID != "" {
+		if canonical, ok := sg.resolveControllerByFacility(facilityID, identifier); ok {
+			return canonical, true
+		}
+	}
+
+	return sg.resolveControllerByFacility("", identifier)
+}
+
 func (sg *scenarioGroup) resolveControllerByFacility(facilityID, identifier string) (string, bool) {
 	identifier = strings.TrimSpace(identifier)
 	if identifier == "" {
@@ -198,30 +234,50 @@ func (s *scenario) initializeControllerConfigurations(sg *scenarioGroup, e *util
 		e.ErrorString("\"solo_configuration.solo_position\" must specify exactly one controller")
 	}
 
+	positions := make(map[string]sim.ControllerPositionConfig)
 	for ctrl, spec := range s.SoloConfiguration.SoloPosition {
-		ctrl = strings.TrimSpace(ctrl)
-		if ctrl == "" {
+		original := strings.TrimSpace(ctrl)
+		if original == "" {
 			e.ErrorString("\"solo_configuration.solo_position\" must not contain empty controller identifiers")
 			continue
 		}
 		if spec == nil {
-			e.ErrorString("definition for solo controller %q is missing", ctrl)
+			e.ErrorString("definition for solo controller %q is missing", original)
 			continue
 		}
 
-		s.SoloController = ctrl
-
-		consolidated := sanitizePositionList(spec.ConsolidatedTCPs)
-		s.SoloControllerConfig.Positions[ctrl] = sim.ControllerPositionConfig{ConsolidatedPositions: consolidated}
-
-		if _, ok := sg.ControlPositions[ctrl]; !ok {
-			e.ErrorString("controller %q for \"solo_configuration\" is unknown", ctrl)
+		canonical, ok := sg.canonicalControllerIdentifier(original)
+		if !ok {
+			e.ErrorString("controller %q for \"solo_configuration\" is unknown", original)
+			continue
 		}
-		for _, c := range consolidated {
-			if _, ok := sg.ControlPositions[c]; !ok {
-				e.ErrorString("consolidated controller %q for solo controller %q is unknown", c, ctrl)
+
+		consolidated := make([]string, 0, len(spec.ConsolidatedTCPs))
+		seen := make(map[string]struct{})
+		for _, c := range spec.ConsolidatedTCPs {
+			c = strings.TrimSpace(c)
+			if c == "" {
+				continue
 			}
+			resolved, rok := sg.canonicalControllerIdentifier(c)
+			if !rok {
+				e.ErrorString("consolidated controller %q for solo controller %q is unknown", c, original)
+				continue
+			}
+			if _, dup := seen[resolved]; dup {
+				continue
+			}
+			seen[resolved] = struct{}{}
+			consolidated = append(consolidated, resolved)
 		}
+		slices.Sort(consolidated)
+
+		positions[canonical] = sim.ControllerPositionConfig{ConsolidatedPositions: consolidated}
+		s.SoloController = canonical
+	}
+
+	for key, cfg := range positions {
+		s.SoloControllerConfig.Positions[key] = cfg
 	}
 
 	if s.MultiConfiguration != nil {
@@ -236,29 +292,47 @@ func (s *scenario) initializeControllerConfigurations(sg *scenarioGroup, e *util
 
 		positions := make(map[string]sim.ControllerPositionConfig)
 		var keys []string
+		normalized := make(map[string]*scenarioPositionSpec)
 		for ctrl, spec := range s.MultiConfiguration.Positions {
-			ctrl = strings.TrimSpace(ctrl)
-			if ctrl == "" {
+			original := strings.TrimSpace(ctrl)
+			if original == "" {
 				e.ErrorString("\"multi_configuration.positions\" must not contain empty controller identifiers")
 				continue
 			}
 			if spec == nil {
-				e.ErrorString("definition for multi controller %q is missing", ctrl)
+				e.ErrorString("definition for multi controller %q is missing", original)
 				continue
 			}
 
-			consolidated := sanitizePositionList(spec.ConsolidatedPositions)
-			positions[ctrl] = sim.ControllerPositionConfig{ConsolidatedPositions: consolidated}
-			keys = append(keys, ctrl)
+			canonical, ok := sg.canonicalControllerIdentifier(original)
+			if !ok {
+				e.ErrorString("controller %q in \"multi_configuration\" is unknown", original)
+				continue
+			}
 
-			if _, ok := sg.ControlPositions[ctrl]; !ok {
-				e.ErrorString("controller %q in \"multi_configuration\" is unknown", ctrl)
-			}
-			for _, c := range consolidated {
-				if _, ok := sg.ControlPositions[c]; !ok {
-					e.ErrorString("consolidated controller %q for controller %q is unknown", c, ctrl)
+			consolidated := make([]string, 0, len(spec.ConsolidatedPositions))
+			seen := make(map[string]struct{})
+			for _, c := range spec.ConsolidatedPositions {
+				c = strings.TrimSpace(c)
+				if c == "" {
+					continue
 				}
+				resolved, rok := sg.canonicalControllerIdentifier(c)
+				if !rok {
+					e.ErrorString("consolidated controller %q for controller %q is unknown", c, original)
+					continue
+				}
+				if _, dup := seen[resolved]; dup {
+					continue
+				}
+				seen[resolved] = struct{}{}
+				consolidated = append(consolidated, resolved)
 			}
+			slices.Sort(consolidated)
+
+			positions[canonical] = sim.ControllerPositionConfig{ConsolidatedPositions: consolidated}
+			keys = append(keys, canonical)
+			normalized[canonical] = spec
 		}
 
 		if len(positions) == 0 {
@@ -277,6 +351,9 @@ func (s *scenario) initializeControllerConfigurations(sg *scenarioGroup, e *util
 		}
 		s.SplitConfigurations = av.SplitConfigurationSet{s.MultiConfiguration.ConfigurationID: cfg}
 		s.DefaultSplit = s.MultiConfiguration.ConfigurationID
+		if len(normalized) > 0 {
+			s.MultiConfiguration.Positions = normalized
+		}
 	} else {
 		s.MultiControllerConfig = nil
 		s.SplitConfigurations = av.SplitConfigurationSet{
@@ -290,32 +367,53 @@ func (s *scenario) initializeControllerConfigurations(sg *scenarioGroup, e *util
 	s.VirtualPositionConfig = make(map[string]sim.ControllerPositionConfig)
 	if len(s.VirtualPositionSpecs) > 0 {
 		var vkeys []string
+		normalized := make(map[string]*scenarioPositionSpec)
 		for ctrl, spec := range s.VirtualPositionSpecs {
-			ctrl = strings.TrimSpace(ctrl)
-			if ctrl == "" {
+			original := strings.TrimSpace(ctrl)
+			if original == "" {
 				e.ErrorString("\"virtual_positions\" must not contain empty controller identifiers")
 				continue
 			}
 			if spec == nil {
-				e.ErrorString("definition for virtual controller %q is missing", ctrl)
+				e.ErrorString("definition for virtual controller %q is missing", original)
 				continue
 			}
 
-			consolidated := sanitizePositionList(spec.ConsolidatedPositions)
-			s.VirtualPositionConfig[ctrl] = sim.ControllerPositionConfig{ConsolidatedPositions: consolidated}
-			vkeys = append(vkeys, ctrl)
+			canonical, ok := sg.canonicalControllerIdentifier(original)
+			if !ok {
+				e.ErrorString("virtual controller %q is unknown", original)
+				continue
+			}
 
-			if _, ok := sg.ControlPositions[ctrl]; !ok {
-				e.ErrorString("virtual controller %q is unknown", ctrl)
-			}
-			for _, c := range consolidated {
-				if _, ok := sg.ControlPositions[c]; !ok {
-					e.ErrorString("virtual consolidated controller %q for %q is unknown", c, ctrl)
+			consolidated := make([]string, 0, len(spec.ConsolidatedPositions))
+			seen := make(map[string]struct{})
+			for _, c := range spec.ConsolidatedPositions {
+				c = strings.TrimSpace(c)
+				if c == "" {
+					continue
 				}
+				resolved, rok := sg.canonicalControllerIdentifier(c)
+				if !rok {
+					e.ErrorString("virtual consolidated controller %q for %q is unknown", c, original)
+					continue
+				}
+				if _, dup := seen[resolved]; dup {
+					continue
+				}
+				seen[resolved] = struct{}{}
+				consolidated = append(consolidated, resolved)
 			}
+			slices.Sort(consolidated)
+
+			s.VirtualPositionConfig[canonical] = sim.ControllerPositionConfig{ConsolidatedPositions: consolidated}
+			vkeys = append(vkeys, canonical)
+			normalized[canonical] = spec
 		}
 		slices.Sort(vkeys)
 		s.VirtualControllers = vkeys
+		if len(normalized) > 0 {
+			s.VirtualPositionSpecs = normalized
+		}
 	} else {
 		s.VirtualControllers = nil
 	}
