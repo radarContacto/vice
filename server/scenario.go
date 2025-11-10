@@ -814,9 +814,9 @@ func (sg *scenarioGroup) populateControlPositionsFromFacilities(e *util.ErrorLog
 				legacyID = ctrl.Id()
 			}
 
-			id := ctrl.FacilityPositionID()
+			id := legacyID
 			if id == "" {
-				id = legacyID
+				id = ctrl.FacilityPositionID()
 			}
 
 			if id == "" {
@@ -1100,9 +1100,13 @@ func (sg *scenarioGroup) rewriteControllers(e *util.ErrorLogger) {
 		originalPosition := position
 		ctrl.Position = originalPosition
 
-		canonicalID := ctrl.FacilityPositionID()
+		canonicalID := ctrl.Id()
 		if canonicalID == "" {
-			canonicalID = ctrl.Id()
+			canonicalID = ctrl.FacilityPositionID()
+		}
+
+		if canonicalID == "" {
+			canonicalID = originalPosition
 		}
 
 		if canonicalID == "" {
