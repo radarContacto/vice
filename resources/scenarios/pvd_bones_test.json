@@ -53,6 +53,8 @@
           "initial_altitude": 21000,
           "initial_controller": "ZCB_42",
           "initial_speed": 310,
+          "entry_fix": "ORW",
+          "exit_fix": "PVD",
           "star": "WIPOR3",
           "runway_waypoints": {
             "KPVD": {
@@ -123,14 +125,23 @@
           "KPVD": 10
         }
       },
-      "solo_controller": "NCA_1D",
-      "multi_controllers": {
-        "default": {
-          "1D": { "primary": true, "arrivals": ["WIPOR"] },
-          "1A": { "backup": "1D", "departures": ["KPVD"], "arrivals": [] }
+      "solo_configuration": {
+        "configuration_id": "FG2",
+        "solo_position": {
+          "1D": { "consolidated_positions": ["1A"] }
         }
       },
-      "controllers": ["NCA_1A", "ZCB_42"],
+      "multi_configuration": {
+        "configuration_id": "FG2",
+        "positions": {
+          "1D": { "consolidated_positions": [] },
+          "1A": { "consolidated_positions": [] }
+        }
+      },
+      "virtual_positions": {
+        "1T": { "consolidated_positions": [] },
+        "ZBW_42": { "consolidated_positions": [] }
+      },
       "default_maps": ["RVMPVD011S"],
       "departure_runways": [
         {
@@ -193,7 +204,7 @@
       "JUMPR": "7TN"
     },
     "coordination_lists": [
-      { "name": ".     PVD D DEP", "id": "D", "airports": ["KPVD"] }
+      { "name": ".     PVD D DEP", "id": "D", "positions": ["PVD_1D"] }
     ],
     "significant_points": {
       "PUT": {},
