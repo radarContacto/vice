@@ -1140,7 +1140,7 @@ func (sp *STARSPane) drawCoordinationLists(ctx *panes.Context, paneExtent math.E
 					return false
 				}
 
-				if !slices.Contains(cl.Airports, dep.DepartureAirport) {
+				if !slices.Contains(cl.Positions, dep.DepartureController) {
 					return false
 				}
 				for callsign, state := range sp.TrackState {

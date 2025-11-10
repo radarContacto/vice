@@ -1653,6 +1653,8 @@ type Overflight struct {
 	InitialSpeed        float32                 `json:"initial_speed"`
 	AssignedSpeed       float32                 `json:"assigned_speed"`
 	SpeedRestriction    float32                 `json:"speed_restriction"`
+	EntryFix            string                  `json:"entry_fix"`
+	ExitFix             string                  `json:"exit_fix"`
 	InitialController   string                  `json:"initial_controller"`
 	Scratchpad          string                  `json:"scratchpad"`
 	SecondaryScratchpad string                  `json:"secondary_scratchpad"`
@@ -1710,6 +1712,16 @@ func (of *Overflight) PostDeserialize(loc Locator, nmPerLongitude float32, magne
 
 	if of.InitialSpeed == 0 {
 		e.ErrorString("must specify \"initial_speed\"")
+	}
+
+	of.EntryFix = strings.ToUpper(strings.TrimSpace(of.EntryFix))
+	if of.EntryFix == "" {
+		e.ErrorString("must specify \"entry_fix\"")
+	}
+
+	of.ExitFix = strings.ToUpper(strings.TrimSpace(of.ExitFix))
+	if of.ExitFix == "" {
+		e.ErrorString("must specify \"exit_fix\"")
 	}
 
 	if of.InitialController == "" {

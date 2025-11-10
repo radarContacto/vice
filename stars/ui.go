@@ -383,7 +383,7 @@ func (sp *STARSPane) DrawInfo(c *client.ControlClient, p platform.Platform, lg *
 		if imgui.BeginTableV("tclists", 3, tableFlags, imgui.Vec2{}, 0) {
 			imgui.TableSetupColumn("Id")
 			imgui.TableSetupColumn("Type")
-			imgui.TableSetupColumn("Airports")
+			imgui.TableSetupColumn("Positions")
 			imgui.TableHeadersRow()
 
 			for i, ap := range c.TowerListAirports() {
@@ -406,7 +406,7 @@ func (sp *STARSPane) DrawInfo(c *client.ControlClient, p platform.Platform, lg *
 				imgui.TableNextColumn()
 				imgui.Text("Coord. (" + list.Name + ")")
 				imgui.TableNextColumn()
-				imgui.Text(strings.Join(list.Airports, ", "))
+				imgui.Text(strings.Join(list.Positions, ", "))
 			}
 			imgui.EndTable()
 		}
