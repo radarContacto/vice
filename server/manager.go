@@ -492,6 +492,9 @@ func (sm *SimManager) makeSimConfiguration(config *NewSimConfiguration, lg *log.
 	}
 
 	add := func(callsign string) {
+		if _, virtual := sc.VirtualPositionConfig[callsign]; virtual {
+			return
+		}
 		if ctrl, ok := sg.ControlPositions[callsign]; !ok {
 			lg.Errorf("%s: control position unknown??!", callsign)
 		} else {

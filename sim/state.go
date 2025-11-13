@@ -228,6 +228,15 @@ func newState(config NewSimConfiguration, startTime time.Time, manifest *VideoMa
 		ss.Controllers[callsign] = ctrl
 	}
 
+	for _, callsign := range config.LocalControllers {
+		if _, seen := addedControllers[callsign]; seen {
+			continue
+		}
+		if ctrl, ok := config.ControlPositions[callsign]; ok {
+			ss.Controllers[callsign] = ctrl
+		}
+	}
+
 	ss.DepartureAirports = make(map[string]interface{})
 	for name := range ss.LaunchConfig.DepartureRates {
 		ss.DepartureAirports[name] = nil
