@@ -44,7 +44,7 @@ type State struct {
 	VFRRunways        map[string]av.Runway // assume just one runway per airport
 	ReleaseDepartures []ReleaseDeparture
 
-	// Signed in human controllers + virtual controllers
+	// Signed in controllers
 	Controllers      map[string]*av.Controller
 	HumanControllers []string
 
@@ -52,12 +52,10 @@ type State struct {
 
 	SoloControllerConfig  *ControllerConfiguration
 	MultiControllerConfig *ControllerConfiguration
-	VirtualPositionConfig map[string]ControllerPositionConfig
 	FixPairAssignments    map[string]map[FixPairKey]string
 
 	activeControllerConfig *ControllerConfiguration
 	consolidationLookup    map[string]string
-	virtualConsolidation   map[string]string
 	activeConfigurationID  string
 
 	PrimaryController string
@@ -136,7 +134,6 @@ func newState(config NewSimConfiguration, startTime time.Time, manifest *VideoMa
 
 		SoloControllerConfig:  config.SoloControllerConfig,
 		MultiControllerConfig: config.MultiControllerConfig,
-		VirtualPositionConfig: config.VirtualPositionConfig,
 		FixPairAssignments:    config.FixPairAssignments,
 
 		DepartureRunways: config.DepartureRunways,
@@ -164,7 +161,6 @@ func newState(config NewSimConfiguration, startTime time.Time, manifest *VideoMa
 		Instructors: make(map[string]bool),
 	}
 
-	ss.virtualConsolidation = buildVirtualConsolidation(ss.VirtualPositionConfig)
 	ss.initializeControllerConfigurations(config.IsLocal)
 
 	// Grab initial METAR for each airport
@@ -210,19 +206,7 @@ func newState(config NewSimConfiguration, startTime time.Time, manifest *VideoMa
 		ss.FacilityAdaptation.RestrictionAreas = append(ss.FacilityAdaptation.RestrictionAreas, ra)
 	}
 
-	addedControllers := make(map[string]struct{})
-
-	for _, callsign := range config.VirtualControllers {
-		// Filter out any that are actually human-controlled positions.
-		if callsign == ss.PrimaryController {
-			continue
-		}
-		if ss.MultiControllers != nil {
-			if _, ok := ss.MultiControllers[callsign]; ok {
-				continue
-			}
-		}
-
+	for _, callsign := range config.LocalControllers {
 		if ctrl, ok := config.ControlPositions[callsign]; ok {
 			ss.Controllers[callsign] = ctrl
 			addedControllers[callsign] = struct{}{}
@@ -289,20 +273,6 @@ func buildConsolidationLookup(cfg *ControllerConfiguration) map[string]string {
 	return lookup
 }
 
-func buildVirtualConsolidation(cfg map[string]ControllerPositionConfig) map[string]string {
-	lookup := make(map[string]string)
-	for owner, pos := range cfg {
-		lookup[owner] = owner
-		for _, consolidated := range pos.ConsolidatedPositions {
-			if consolidated == "" {
-				continue
-			}
-			lookup[consolidated] = owner
-		}
-	}
-	return lookup
-}
-
 func (ss *State) initializeControllerConfigurations(isLocal bool) {
 	if isLocal || ss.MultiControllerConfig == nil {
 		ss.setActiveControllerConfiguration(ss.SoloControllerConfig)
@@ -326,9 +296,6 @@ func (ss *State) resolveConsolidation(tcp string) string {
 		return tcp
 	}
 	if owner, ok := ss.consolidationLookup[tcp]; ok {
-		return owner
-	}
-	if owner, ok := ss.virtualConsolidation[tcp]; ok {
 		return owner
 	}
 	return tcp

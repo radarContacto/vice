@@ -128,20 +128,16 @@
       },
       "solo_configuration": {
         "configuration_id": "FG2",
-        "solo_position": {
-          "1D": { "consolidated_positions": ["1A"] }
+        "solo_position": "1D",
+        "position_consolidation": {
+          "1D": ["1A"]
         }
       },
       "multi_configuration": {
         "configuration_id": "FG2",
-        "positions": {
-          "1D": { "consolidated_positions": [] },
-          "1A": { "consolidated_positions": [] }
+        "position_consolidation": {
+          "1D": ["1T"]
         }
-      },
-      "virtual_positions": {
-        "1T": { "consolidated_positions": [] },
-        "ZBW_42": { "consolidated_positions": [] }
       },
       "default_maps": ["RVMPVD011S"],
       "departure_runways": [

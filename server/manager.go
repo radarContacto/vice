@@ -89,7 +89,6 @@ type SimScenarioConfiguration struct {
 	SoloController        string
 	SoloControllerConfig  *sim.ControllerConfiguration
 	MultiControllerConfig *sim.ControllerConfiguration
-	VirtualPositionConfig map[string]sim.ControllerPositionConfig
 	FixPairAssignments    map[string]map[sim.FixPairKey]string
 	PrimaryAirport        string
 	MagneticVariation     float32
@@ -467,10 +466,8 @@ func (sm *SimManager) makeSimConfiguration(config *NewSimConfiguration, lg *log.
 		Airspace:                    sg.Airspace,
 		ControllerAirspace:          sc.Airspace,
 		ControlPositions:            sg.ControlPositions,
-		VirtualControllers:          sc.VirtualControllers,
 		SoloControllerConfig:        sc.SoloControllerConfig,
 		MultiControllerConfig:       sc.MultiControllerConfig,
-		VirtualPositionConfig:       sc.VirtualPositionConfig,
 		FixPairAssignments:          sc.FixPairAssignments,
 		LocalControllers:            sc.LocalControllers,
 		SignOnPositions:             make(map[string]*av.Controller),

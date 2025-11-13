@@ -226,14 +226,12 @@ type NewSimConfiguration struct {
 	ControlPositions   map[string]*av.Controller
 	PrimaryController  string
 	ControllerAirspace map[string][]string
-	VirtualControllers []string
 	LocalControllers   []string
 	MultiControllers   av.SplitConfiguration
 	SignOnPositions    map[string]*av.Controller
 
 	SoloControllerConfig  *ControllerConfiguration
 	MultiControllerConfig *ControllerConfiguration
-	VirtualPositionConfig map[string]ControllerPositionConfig
 	FixPairAssignments    map[string]map[FixPairKey]string
 
 	TFRs               []av.TFR
