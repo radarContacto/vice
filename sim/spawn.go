@@ -1138,17 +1138,20 @@ func (s *Sim) createArrivalNoLock(group string, arrivalAirport string) (*Aircraf
 		}
 	}
 
+	entryFix := arr.EntryFix
+	exitFix := arr.ExitFix
+
 	starsFp := NASFlightPlan{
 		ACID:             ACID(ac.ADSBCallsign),
-		EntryFix:         "", // TODO
-		ExitFix:          util.Select(len(ac.FlightPlan.ArrivalAirport) == 4, ac.FlightPlan.ArrivalAirport[1:], ac.FlightPlan.ArrivalAirport),
+		EntryFix:         entryFix,
+		ExitFix:          exitFix,
 		ArrivalAirport:   ac.FlightPlan.ArrivalAirport,
 		CoordinationTime: getAircraftTime(s.State.SimTime, s.Rand),
 		PlanType:         RemoteEnroute,
 
 		TrackingController:       arr.InitialController,
 		ControllingController:    arr.InitialController,
-		InboundHandoffController: s.getInboundHandoffController(arr.InitialController, group, ac.Nav.Waypoints),
+		InboundHandoffController: s.getInboundHandoffController(arr.InitialController, "A", entryFix, exitFix, ac.Nav.Waypoints),
 
 		Rules:        av.FlightRulesIFR,
 		TypeOfFlight: av.FlightTypeArrival,
@@ -1187,7 +1190,7 @@ func (s *Sim) createArrivalNoLock(group string, arrivalAirport string) (*Aircraf
 	return ac, err
 }
 
-func (s *Sim) getInboundHandoffController(initialTCP string, group string, wps av.WaypointArray) string {
+func (s *Sim) getInboundHandoffController(initialTCP string, flightType string, entryFix string, exitFix string, wps av.WaypointArray) string {
 	if tcp := s.State.ResolveController(initialTCP); initialTCP != "" && s.isActiveHumanController(tcp) {
 		return initialTCP
 	} else if slices.ContainsFunc(wps, func(wp av.Waypoint) bool { return wp.HumanHandoff }) {
@@ -1197,19 +1200,9 @@ func (s *Sim) getInboundHandoffController(initialTCP string, group string, wps a
 		// the actual handoff controller will be resolved later when the
 		// handoff happens, so that it can reflect which controllers are
 		// actually signed in at that point.
-		hoTCP := s.State.PrimaryController
-		if len(s.State.MultiControllers) > 0 {
-			var err error
-			hoTCP, err = s.State.MultiControllers.GetInboundController(group)
-			if err != nil {
-				s.lg.Error("Unable to resolve arrival controller", slog.Any("error", err),
-					slog.String("initialTCP", initialTCP), slog.String("group", group),
-					slog.Any("waypoints", wps))
-			}
-
-			if hoTCP == "" {
-				hoTCP = s.State.PrimaryController
-			}
+		hoTCP := s.State.ResolveFixPairOwner(flightType, entryFix, exitFix)
+		if hoTCP == "" {
+			hoTCP = s.State.PrimaryController
 		}
 		return hoTCP
 	}
@@ -1310,12 +1303,25 @@ func (s *Sim) createIFRDepartureNoLock(departureAirport, runway, category string
 		return nil, err
 	}
 
-	shortExit, _, _ := strings.Cut(dep.Exit, ".") // chop any excess
+	entryFix := strings.ToUpper(departureAirport)
+	if len(entryFix) == 4 && entryFix[0] == 'K' {
+		entryFix = entryFix[1:]
+	}
+	exitFix := strings.ToUpper(strings.TrimSpace(dep.ExitFix))
+	if exitFix == "" {
+		shortExit, _, _ := strings.Cut(dep.Exit, ".")
+		exitFix = strings.ToUpper(shortExit)
+	}
+	fixPairOwner := s.State.ResolveFixPairOwner("P", entryFix, exitFix)
+	if fixPairOwner == "" {
+		fixPairOwner = s.State.PrimaryController
+	}
+
 	_, tracon := av.DB.TRACONs[s.State.TRACON]
 	starsFp := NASFlightPlan{
 		ACID:             ACID(ac.ADSBCallsign),
-		EntryFix:         util.Select(len(ac.FlightPlan.DepartureAirport) == 4, ac.FlightPlan.DepartureAirport[1:], ac.FlightPlan.DepartureAirport),
-		ExitFix:          shortExit,
+		EntryFix:         entryFix,
+		ExitFix:          exitFix,
 		ArrivalAirport:   ac.FlightPlan.ArrivalAirport,
 		CoordinationTime: getAircraftTime(s.State.SimTime, s.Rand),
 		PlanType:         RemoteEnroute,
@@ -1338,22 +1344,10 @@ func (s *Sim) createIFRDepartureNoLock(departureAirport, runway, category string
 		// starting out with a virtual controller
 		starsFp.TrackingController = ap.DepartureController
 		starsFp.ControllingController = ap.DepartureController
-		starsFp.InboundHandoffController = exitRoute.HandoffController
+		starsFp.InboundHandoffController = fixPairOwner
 	} else {
 		// human controller will be first
-		ctrl := s.State.PrimaryController
-		if len(s.State.MultiControllers) > 0 {
-			var err error
-			ctrl, err = s.State.MultiControllers.GetDepartureController(departureAirport, runway, exitRoute.SID)
-			if err != nil {
-				s.lg.Error("unable to get departure controller", slog.Any("error", err),
-					slog.String("adsb_callsign", string(ac.ADSBCallsign)), slog.Any("aircraft", ac))
-			}
-		}
-		if ctrl == "" {
-			ctrl = s.State.PrimaryController
-		}
-
+		ctrl := fixPairOwner
 		ac.DepartureContactAltitude =
 			ac.Nav.FlightState.DepartureAirportElevation + 500 + float32(s.Rand.Intn(500))
 		ac.DepartureContactAltitude = min(ac.DepartureContactAltitude, float32(ac.FlightPlan.Altitude))
@@ -1404,15 +1398,15 @@ func (s *Sim) createOverflightNoLock(group string) (*Aircraft, error) {
 	_, tracon := av.DB.TRACONs[s.State.TRACON]
 	starsFp := NASFlightPlan{
 		ACID:             ACID(ac.ADSBCallsign),
-		EntryFix:         "", // TODO
-		ExitFix:          "", // TODO
+		EntryFix:         of.EntryFix,
+		ExitFix:          of.ExitFix,
 		ArrivalAirport:   ac.FlightPlan.ArrivalAirport,
 		CoordinationTime: getAircraftTime(s.State.SimTime, s.Rand),
 		PlanType:         RemoteEnroute,
 
 		TrackingController:       of.InitialController,
 		ControllingController:    of.InitialController,
-		InboundHandoffController: s.getInboundHandoffController(of.InitialController, group, ac.Nav.Waypoints),
+		InboundHandoffController: s.getInboundHandoffController(of.InitialController, "E", of.EntryFix, of.ExitFix, ac.Nav.Waypoints),
 
 		Rules:               av.FlightRulesIFR,
 		TypeOfFlight:        av.FlightTypeOverflight,

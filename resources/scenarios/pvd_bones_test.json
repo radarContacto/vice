@@ -29,6 +29,7 @@
           ],
           "destination": "KBWI",
           "exit": "PUT",
+          "exit_fix": "PUT",
           "route": "PUT NELIE Q75 MXE V378 NUGGY TRISH3"
         }
       ],
@@ -53,6 +54,8 @@
           "initial_altitude": 21000,
           "initial_controller": "ZCB_42",
           "initial_speed": 310,
+          "entry_fix": "ORW",
+          "exit_fix": "PVD",
           "star": "WIPOR3",
           "runway_waypoints": {
             "KPVD": {
@@ -123,14 +126,19 @@
           "KPVD": 10
         }
       },
-      "solo_controller": "NCA_1D",
-      "multi_controllers": {
-        "default": {
-          "1D": { "primary": true, "arrivals": ["WIPOR"] },
-          "1A": { "backup": "1D", "departures": ["KPVD"], "arrivals": [] }
+      "solo_configuration": {
+        "configuration_id": "FG2",
+        "solo_position": "1D",
+        "position_consolidation": {
+          "1D": ["1A"]
         }
       },
-      "controllers": ["NCA_1A", "ZCB_42"],
+      "multi_configuration": {
+        "configuration_id": "FG2",
+        "position_consolidation": {
+          "1D": ["1T"]
+        }
+      },
       "default_maps": ["RVMPVD011S"],
       "departure_runways": [
         {
@@ -193,7 +201,7 @@
       "JUMPR": "7TN"
     },
     "coordination_lists": [
-      { "name": ".     PVD D DEP", "id": "D", "airports": ["KPVD"] }
+      { "name": ".     PVD D DEP", "id": "D", "positions": ["PVD_1D"] }
     ],
     "significant_points": {
       "PUT": {},

@@ -453,6 +453,13 @@ func (ap *Airport) PostDeserialize(icao string, loc Locator, nmPerLongitude floa
 			}
 		}
 
+		exitFix := strings.ToUpper(strings.TrimSpace(dep.ExitFix))
+		if exitFix == "" {
+			e.ErrorString("must specify \"exit_fix\" for departure")
+		}
+
+		ap.Departures[i].ExitFix = exitFix
+
 		if !checkScratchpad(dep.Scratchpad) {
 			e.ErrorString("%s: invalid scratchpad", dep.Scratchpad)
 		}
@@ -718,7 +725,8 @@ type ExitRoute struct {
 }
 
 type Departure struct {
-	Exit string `json:"exit"`
+	Exit    string `json:"exit"`
+	ExitFix string `json:"exit_fix"`
 
 	Destination         string                  `json:"destination"`
 	Altitudes           util.SingleOrArray[int] `json:"altitude,omitempty"`

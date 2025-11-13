@@ -44,9 +44,19 @@ type State struct {
 	VFRRunways        map[string]av.Runway // assume just one runway per airport
 	ReleaseDepartures []ReleaseDeparture
 
-	// Signed in human controllers + virtual controllers
+	// Signed in controllers
 	Controllers      map[string]*av.Controller
 	HumanControllers []string
+
+	ControlPositions map[string]*av.Controller
+
+	SoloControllerConfig  *ControllerConfiguration
+	MultiControllerConfig *ControllerConfiguration
+	FixPairAssignments    map[string]map[FixPairKey]string
+
+	activeControllerConfig *ControllerConfiguration
+	consolidationLookup    map[string]string
+	activeConfigurationID  string
 
 	PrimaryController string
 	MultiControllers  av.SplitConfiguration
@@ -117,9 +127,14 @@ func newState(config NewSimConfiguration, startTime time.Time, manifest *VideoMa
 		VFRRunways: make(map[string]av.Runway),
 
 		Controllers:       make(map[string]*av.Controller),
+		ControlPositions:  config.ControlPositions,
 		PrimaryController: config.PrimaryController,
 		MultiControllers:  config.MultiControllers,
 		UserTCP:           serverCallsign,
+
+		SoloControllerConfig:  config.SoloControllerConfig,
+		MultiControllerConfig: config.MultiControllerConfig,
+		FixPairAssignments:    config.FixPairAssignments,
 
 		DepartureRunways: config.DepartureRunways,
 		ArrivalRunways:   config.ArrivalRunways,
@@ -145,6 +160,8 @@ func newState(config NewSimConfiguration, startTime time.Time, manifest *VideoMa
 
 		Instructors: make(map[string]bool),
 	}
+
+	ss.initializeControllerConfigurations(config.IsLocal)
 
 	// Grab initial METAR for each airport
 	for ap, m := range metar {
@@ -189,17 +206,7 @@ func newState(config NewSimConfiguration, startTime time.Time, manifest *VideoMa
 		ss.FacilityAdaptation.RestrictionAreas = append(ss.FacilityAdaptation.RestrictionAreas, ra)
 	}
 
-	for _, callsign := range config.VirtualControllers {
-		// Filter out any that are actually human-controlled positions.
-		if callsign == ss.PrimaryController {
-			continue
-		}
-		if ss.MultiControllers != nil {
-			if _, ok := ss.MultiControllers[callsign]; ok {
-				continue
-			}
-		}
-
+	for _, callsign := range config.LocalControllers {
 		if ctrl, ok := config.ControlPositions[callsign]; ok {
 			ss.Controllers[callsign] = ctrl
 		} else {
@@ -235,6 +242,75 @@ func newState(config NewSimConfiguration, startTime time.Time, manifest *VideoMa
 	}
 
 	return ss
+}
+
+func buildConsolidationLookup(cfg *ControllerConfiguration) map[string]string {
+	lookup := make(map[string]string)
+	if cfg == nil {
+		return lookup
+	}
+
+	for owner, pos := range cfg.Positions {
+		lookup[owner] = owner
+		for _, consolidated := range pos.ConsolidatedPositions {
+			if consolidated == "" {
+				continue
+			}
+			lookup[consolidated] = owner
+		}
+	}
+
+	return lookup
+}
+
+func (ss *State) initializeControllerConfigurations(isLocal bool) {
+	if isLocal || ss.MultiControllerConfig == nil {
+		ss.setActiveControllerConfiguration(ss.SoloControllerConfig)
+	} else {
+		ss.setActiveControllerConfiguration(ss.MultiControllerConfig)
+	}
+}
+
+func (ss *State) setActiveControllerConfiguration(cfg *ControllerConfiguration) {
+	ss.activeControllerConfig = cfg
+	ss.consolidationLookup = buildConsolidationLookup(cfg)
+	if cfg != nil {
+		ss.activeConfigurationID = strings.ToUpper(cfg.ConfigurationID)
+	} else {
+		ss.activeConfigurationID = ""
+	}
+}
+
+func (ss *State) resolveConsolidation(tcp string) string {
+	if tcp == "" {
+		return tcp
+	}
+	if owner, ok := ss.consolidationLookup[tcp]; ok {
+		return owner
+	}
+	return tcp
+}
+
+func (ss *State) ResolveFixPairOwner(flightType, entryFix, exitFix string) string {
+	if ss.activeConfigurationID == "" {
+		return ss.PrimaryController
+	}
+
+	entryFix = strings.ToUpper(strings.TrimSpace(entryFix))
+	exitFix = strings.ToUpper(strings.TrimSpace(exitFix))
+	flightType = strings.ToUpper(strings.TrimSpace(flightType))
+
+	assignments := ss.FixPairAssignments[ss.activeConfigurationID]
+	if len(assignments) == 0 {
+		return ss.PrimaryController
+	}
+
+	key := FixPairKey{FlightType: flightType, EntryFix: entryFix, ExitFix: exitFix}
+	if owner, ok := assignments[key]; ok && owner != "" {
+		return ss.resolveConsolidation(owner)
+	}
+
+	return ss.PrimaryController
 }
 
 func (ss *State) GetStateForController(tcp string) *State {
@@ -344,7 +420,7 @@ func (ss *State) GetRegularReleaseDepartures() []ReleaseDeparture {
 			}
 
 			for _, cl := range ss.FacilityAdaptation.CoordinationLists {
-				if slices.Contains(cl.Airports, dep.DepartureAirport) {
+				if slices.Contains(cl.Positions, dep.DepartureController) {
 					// It'll be in a STARS coordination list
 					return false
 				}
@@ -357,7 +433,7 @@ func (ss *State) GetSTARSReleaseDepartures() []ReleaseDeparture {
 	return util.FilterSlice(ss.ReleaseDepartures,
 		func(dep ReleaseDeparture) bool {
 			for _, cl := range ss.FacilityAdaptation.CoordinationLists {
-				if slices.Contains(cl.Airports, dep.DepartureAirport) {
+				if slices.Contains(cl.Positions, dep.DepartureController) {
 					return true
 				}
 			}

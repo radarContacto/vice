@@ -336,6 +336,7 @@ func (ac *Aircraft) InitializeDeparture(ap *av.Airport, departureAirport string,
 	}
 
 	ac.FlightPlan.Exit = dep.Exit
+	ac.FlightPlan.ExitFix = strings.ToUpper(dep.ExitFix)
 
 	r := rand.Make()
 	idx := rand.SampleFiltered(r, dep.Altitudes, func(alt int) bool { return alt <= int(perf.Ceiling) })

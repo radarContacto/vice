@@ -2881,7 +2881,7 @@ func (sp *STARSPane) autoReleaseDepartures(ctx *panes.Context) {
 		// Get the aircraft that should be included in this list.
 		deps := util.FilterSlice(releaseAircraft,
 			func(dep sim.ReleaseDeparture) bool {
-				return slices.Contains(list.Airports, dep.DepartureAirport)
+				return slices.Contains(list.Positions, dep.DepartureController)
 			})
 
 		cl, ok := ps.CoordinationLists[list.Id]
