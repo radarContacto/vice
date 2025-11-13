@@ -209,8 +209,18 @@ func newState(config NewSimConfiguration, startTime time.Time, manifest *VideoMa
 	for _, callsign := range config.LocalControllers {
 		if ctrl, ok := config.ControlPositions[callsign]; ok {
 			ss.Controllers[callsign] = ctrl
+			addedControllers[callsign] = struct{}{}
 		} else {
 			lg.Errorf("%s: controller not found in ControlPositions??", callsign)
+		}
+	}
+
+	for _, callsign := range config.LocalControllers {
+		if _, seen := addedControllers[callsign]; seen {
+			continue
+		}
+		if ctrl, ok := config.ControlPositions[callsign]; ok {
+			ss.Controllers[callsign] = ctrl
 		}
 	}
 
