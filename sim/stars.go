@@ -431,11 +431,11 @@ type STARSControllerConfig struct {
 }
 
 type CoordinationList struct {
-	Name          string   `json:"name"`
-	Id            string   `json:"id"`
-	Airports      []string `json:"airports"`
-	YellowEntries bool     `json:"yellow_entries"`
-	Format        string   `json:"format"`
+        Name          string   `json:"name"`
+        Id            string   `json:"id"`
+        Positions     []string `json:"positions"`
+        YellowEntries bool     `json:"yellow_entries"`
+        Format        string   `json:"format"`
 }
 
 type STARSFacilityTCPConfiguration struct {
