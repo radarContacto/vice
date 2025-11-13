@@ -206,13 +206,26 @@ func newState(config NewSimConfiguration, startTime time.Time, manifest *VideoMa
 		ss.FacilityAdaptation.RestrictionAreas = append(ss.FacilityAdaptation.RestrictionAreas, ra)
 	}
 
+	addedControllers := make(map[string]struct{})
 	for _, callsign := range config.LocalControllers {
-		if ctrl, ok := config.ControlPositions[callsign]; ok {
-			ss.Controllers[callsign] = ctrl
-			addedControllers[callsign] = struct{}{}
-		} else {
+		ctrl, ok := config.ControlPositions[callsign]
+		if !ok || ctrl == nil {
 			lg.Errorf("%s: controller not found in ControlPositions??", callsign)
+			continue
 		}
+
+		ss.Controllers[callsign] = ctrl
+		addedControllers[callsign] = struct{}{}
+	}
+
+	for callsign, ctrl := range config.ControlPositions {
+		if ctrl == nil {
+			continue
+		}
+		if _, alreadyAdded := addedControllers[callsign]; alreadyAdded {
+			continue
+		}
+		ss.Controllers[callsign] = ctrl
 	}
 
 	for _, callsign := range config.LocalControllers {
